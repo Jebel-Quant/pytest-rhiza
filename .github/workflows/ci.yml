@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the suite only needs to read the code.
+permissions:
+  contents: read
+
+# A new push to a PR makes the in-flight run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors the Programming Language :: Python :: X.Y classifiers in pyproject.toml.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      # `uv run` builds and installs pytest-rhiza itself, which is what registers the
+      # pytest11 entry point. The suite drives pytest inside pytest via `pytester`, so
+      # the plugin has to be installed for those inner runs to load it at all.
+      - name: Run tests
+        run: uv run --group test --python ${{ matrix.python-version }} pytest -ra
