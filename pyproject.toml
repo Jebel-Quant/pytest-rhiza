@@ -1,20 +1,21 @@
 [project]
+license = "MIT"
+license-files = ["LICENSE"]
 name = "pytest-rhiza"
 version = "0.1.0"
 description = "The rhiza repository checks, as a pytest plugin instead of a synced test folder"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
 authors = [{ name = "Jebel Quant Research" }]
 keywords = ["pytest", "rhiza", "template", "repository-checks"]
 classifiers = [
     "Framework :: Pytest",
     "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Testing",
+    "Programming Language :: Python :: 3.14",
 ]
 # Deliberately four small runtime dependencies and no more. These are exactly what
 # `make rhiza-test` provisions by hand today (`--with pytest --with pytest-timeout
