@@ -16,11 +16,12 @@ concurrency:
 
 jobs:
   test:
-    name: pytest (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         # Mirrors the Programming Language :: Python :: X.Y classifiers in pyproject.toml.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
@@ -37,5 +38,9 @@ jobs:
       # `uv run` builds and installs pytest-rhiza itself, which is what registers the
       # pytest11 entry point. The suite drives pytest inside pytest via `pytester`, so
       # the plugin has to be installed for those inner runs to load it at all.
+      #
+      # The suite shells out to git (the `latest_tag` fixture, and the throwaway repos
+      # the tests build), and it is `git` on PATH that is used — `shutil.which` resolves
+      # it, so the Windows runner's git works the same as the others.
       - name: Run tests
         run: uv run --group test --python ${{ matrix.python-version }} pytest -ra
