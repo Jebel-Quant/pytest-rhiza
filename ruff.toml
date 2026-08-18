@@ -132,20 +132,6 @@ line-ending = "auto"
     "S607",  # partial executable paths (git, make) are intentional in test drivers
     "ARG",   # pytest fixtures are requested by name for their side effects, not always read
 ]
-# The installed checks. They are test code, but they no longer live under a `tests/`
-# directory — they ship inside the package so they can be installed — so the glob above
-# does not reach them. Same allowances, same reasons.
-#
-# NOTE: this repo is not yet rhiza-managed. Once it is, ruff.toml becomes template-owned
-# and this entry has to either land upstream or be held here by an `exclude:` entry in
-# .rhiza/template.yml. Recorded in README.md under "still to decide".
-"src/pytest_rhiza/checks/*.py" = [
-    "ANN",   # tests prioritize readability and fixtures over strict annotation coverage
-    "S101",  # assert is the test idiom
-    "S603",  # the checks drive git/bash/python via subprocess with fixed argument lists
-    "S607",  # partial executable paths (git, bash) are intentional
-    "ARG",   # pytest fixtures are requested by name for their side effects, not always read
-]
 # Project test suite only — allowances the synced .rhiza/tests should not inherit
 "tests/**/*.py" = [
     "RUF002",  # docstrings quote prose with typographic unicode (e.g. en dash)
