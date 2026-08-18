@@ -17,6 +17,10 @@ import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
+import pytest
+
+from pytest_rhiza._fences import bash_usable
+
 GOOD_README = """# Demo
 
 Install it:
@@ -73,11 +77,21 @@ def test_named_check_module_is_collected_and_passes(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "3 passed" in result.stdout, result.stdout
+    # The bash-fence test skips itself where no working bash exists (Windows runners),
+    # so the sound-README outcome is platform-dependent while still never a failure.
+    expected = "3 passed" if bash_usable() else "2 passed, 1 skipped"
+    assert expected in result.stdout, result.stdout
 
 
 def test_a_broken_bash_fence_fails_the_check(tmp_path: Path) -> None:
-    """A README whose shell does not parse is a failure, not a skip."""
+    """A README whose shell does not parse is a failure, not a skip.
+
+    Requires a real bash: without one the check skips rather than judging the fence,
+    which is the whole point of the probe and is asserted separately in test_fences.
+    """
+    if not bash_usable():
+        pytest.skip("no working `bash -n` on this platform")
+
     (tmp_path / "README.md").write_text(BROKEN_README, encoding="utf-8")
 
     result = _run_checks(

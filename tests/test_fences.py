@@ -59,6 +59,11 @@ class TestSkipFlag:
         assert "raise RuntimeError" not in executed[0]
 
 
+def _parses_cleanly(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+    """Stand in for a bash that parses the probe without complaint."""
+    return subprocess.CompletedProcess(args=["bash", "-n"], returncode=0, stdout="", stderr="")
+
+
 class TestBashUsable:
     """Tests for the probe that decides whether `bash -n` can be trusted.
 
@@ -68,10 +73,24 @@ class TestBashUsable:
     error message. Probing a known-good snippet is what tells the two apart.
     """
 
-    def test_detects_a_working_bash(self) -> None:
-        """A real bash parses the no-op builtin, so the probe passes."""
+    def test_agrees_with_the_real_interpreter(self) -> None:
+        """The probe's verdict matches what this platform's bash actually does.
+
+        The one test here that talks to the real interpreter, so it asserts agreement
+        rather than a fixed answer: True on a developer machine, False on a Windows
+        runner, and False again on a POSIX box whose ``bash`` is a stub. An earlier
+        version asserted True unless ``os.name == "nt"``, which confused the platform
+        for the capability and failed the moment a broken bash was put on PATH.
+        """
         bash_usable.cache_clear()
-        assert bash_usable() is True
+        try:
+            direct = subprocess.run([_fences.BASH, "-n"], input=":\n", capture_output=True, text=True)
+        except OSError:
+            expected = False
+        else:
+            expected = direct.returncode == 0
+
+        assert bash_usable() is expected
 
     def test_rejects_an_interpreter_that_fails_silently(self, monkeypatch) -> None:
         """A bash that exits non-zero writing nothing is not usable — the WSL stub case.
@@ -94,10 +113,22 @@ class TestBashUsable:
         monkeypatch.setattr(_fences, "BASH", "no-such-shell-anywhere")
         assert bash_usable() is False
 
-    def test_result_is_cached(self, monkeypatch) -> None:
-        """The probe runs once per session; every fence would otherwise re-pay it."""
+    def test_accepts_an_interpreter_that_parses(self, monkeypatch) -> None:
+        """A bash that exits zero is usable — the mirror of the silent-failure case."""
         bash_usable.cache_clear()
+        monkeypatch.setattr(_fences.subprocess, "run", _parses_cleanly)
         assert bash_usable() is True
+
+    def test_result_is_cached(self, monkeypatch) -> None:
+        """The probe runs once per session; every fence would otherwise re-pay it.
+
+        Driven through the fake so it holds on Windows too, where the real probe is
+        legitimately False and the caching question is the same either way.
+        """
+        bash_usable.cache_clear()
+        monkeypatch.setattr(_fences.subprocess, "run", _parses_cleanly)
+        assert bash_usable() is True
+
         monkeypatch.setattr(_fences, "BASH", "no-such-shell-anywhere")
         assert bash_usable() is True, "cached result should survive a later BASH change"
         bash_usable.cache_clear()
