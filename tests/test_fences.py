@@ -8,9 +8,11 @@ themselves; they belong to whoever owns the helper, which is now this package.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-from pytest_rhiza._fences import BASH_BLOCK, CODE_BLOCK, should_skip
+from pytest_rhiza import _fences
+from pytest_rhiza._fences import BASH_BLOCK, CODE_BLOCK, bash_usable, should_skip
 
 
 class TestSkipFlag:
@@ -55,3 +57,47 @@ class TestSkipFlag:
         executed = [code for flags, code in all_blocks if not should_skip(flags)]
         assert len(executed) == 1
         assert "raise RuntimeError" not in executed[0]
+
+
+class TestBashUsable:
+    """Tests for the probe that decides whether `bash -n` can be trusted.
+
+    The bug this guards against: on a Windows runner ``bash`` resolved to the WSL
+    launcher stub, which exits non-zero having written nothing. ``bash -n`` signals a
+    syntax error the same way, so every README fence was reported broken with a blank
+    error message. Probing a known-good snippet is what tells the two apart.
+    """
+
+    def test_detects_a_working_bash(self) -> None:
+        """A real bash parses the no-op builtin, so the probe passes."""
+        bash_usable.cache_clear()
+        assert bash_usable() is True
+
+    def test_rejects_an_interpreter_that_fails_silently(self, monkeypatch) -> None:
+        """A bash that exits non-zero writing nothing is not usable — the WSL stub case.
+
+        Faked rather than driven through a real binary: the behaviour being reproduced
+        belongs to a Windows-only stub, and a stand-in like ``false`` does not exist
+        there, so the test would pass on Windows for the wrong reason.
+        """
+        bash_usable.cache_clear()
+
+        def _silent_failure(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=["bash", "-n"], returncode=1, stdout="", stderr="")
+
+        monkeypatch.setattr(_fences.subprocess, "run", _silent_failure)
+        assert bash_usable() is False
+
+    def test_rejects_a_missing_bash(self, monkeypatch) -> None:
+        """No bash on PATH raises OSError, which the probe swallows into False."""
+        bash_usable.cache_clear()
+        monkeypatch.setattr(_fences, "BASH", "no-such-shell-anywhere")
+        assert bash_usable() is False
+
+    def test_result_is_cached(self, monkeypatch) -> None:
+        """The probe runs once per session; every fence would otherwise re-pay it."""
+        bash_usable.cache_clear()
+        assert bash_usable() is True
+        monkeypatch.setattr(_fences, "BASH", "no-such-shell-anywhere")
+        assert bash_usable() is True, "cached result should survive a later BASH change"
+        bash_usable.cache_clear()
