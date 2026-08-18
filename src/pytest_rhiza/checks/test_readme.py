@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from pytest_rhiza._fences import BASH, BASH_BLOCK, SKIP_FLAG, TREE_MARKERS, should_skip
+from pytest_rhiza._fences import BASH, BASH_BLOCK, SKIP_FLAG, TREE_MARKERS, bash_usable, should_skip
 
 
 class TestReadmeExists:
@@ -54,7 +54,15 @@ class TestReadmeBashFragments:
     """
 
     def test_bash_blocks_basic_syntax(self, root: Path, logger) -> None:
-        """Every non-skipped bash block should parse under `bash -n`."""
+        """Every non-skipped bash block should parse under `bash -n`.
+
+        Skips where no working bash exists — see :func:`pytest_rhiza._fences.bash_usable`.
+        A README's fences are the same text on every platform, so one runner that can
+        parse them is enough; a runner that cannot must not invent syntax errors.
+        """
+        if not bash_usable():
+            pytest.skip("no working `bash -n` on this platform; README fences unchecked")
+
         content = (root / "README.md").read_text(encoding="utf-8")
         bash_blocks = BASH_BLOCK.findall(content)
 
@@ -85,4 +93,8 @@ class TestReadmeBashFragments:
             )
 
             if result.returncode != 0:
-                pytest.fail(f"Bash block {i} has syntax errors:\nCode:\n{code}\nError:\n{result.stderr}")
+                # stdout as well as stderr: a bash that fails for a reason other than
+                # syntax tends to explain itself on stdout, and a blank error is the
+                # least actionable failure there is.
+                detail = (result.stderr + result.stdout).strip() or f"exited {result.returncode}, saying nothing"
+                pytest.fail(f"Bash block {i} has syntax errors:\nCode:\n{code}\nError:\n{detail}")

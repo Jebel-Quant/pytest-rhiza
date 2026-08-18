@@ -18,7 +18,9 @@ The regexes and the flag keep their upstream names so the ported checks read as 
 
 from __future__ import annotations
 
+import functools
 import re
+import subprocess  # nosec B404
 
 # Bash code blocks — captures optional flags (e.g. "+RHIZA_SKIP") and the code body.
 BASH_BLOCK = re.compile(r"```bash([^\n]*)\n(.*?)```", re.DOTALL)
@@ -31,6 +33,10 @@ RESULT = re.compile(r"```result\n(.*?)```", re.DOTALL)
 
 # Bash executable used for syntax checking; `bash -n` parses without executing.
 BASH = "bash"
+
+# A snippet that is unambiguously valid bash: `:` is the no-op builtin. Used to probe
+# the toolchain rather than the README.
+_PROBE = ":\n"
 
 # Flag marking a fence as intentionally excluded. Usage: add it after the language
 # identifier on the opening fence line, e.g. ```bash +RHIZA_SKIP
@@ -56,3 +62,35 @@ def should_skip(flags: str) -> bool:
         False
     """
     return SKIP_FLAG in flags
+
+
+@functools.cache
+def bash_usable() -> bool:
+    r"""Return True when ``bash -n`` actually parses a trivially valid snippet.
+
+    **Why probe instead of just running the check.** ``bash -n`` reports a syntax error
+    by exiting non-zero, so anything else that exits non-zero is indistinguishable from
+    one. On Windows that is not hypothetical: ``bash`` can resolve to
+    ``C:\Windows\System32\bash.exe``, the WSL launcher, which exits non-zero having
+    written nothing to stderr when no distribution is installed. The README checks then
+    fail on ``make install`` and print an empty error, which is worse than not running:
+    it accuses the project of a defect the tool invented.
+
+    Probing with :data:`_PROBE` separates "this fence is broken" from "there is no usable
+    bash here", so the checks can skip honestly in the second case. The result is cached
+    because it cannot change within a session and every fence would otherwise re-pay it.
+
+    Returns:
+        True when a working bash was found, False otherwise.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argument list, no shell  # nosec B603
+            [BASH, "-n"],
+            input=_PROBE,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        # bash is absent entirely, or not executable.
+        return False
+    return result.returncode == 0
