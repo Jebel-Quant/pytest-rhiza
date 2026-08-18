@@ -1,3 +1,8 @@
+## [0.2.2] - 2026-08-18
+
+### 💼 Other
+
+- Add Makefile, pre-commit hooks and a CI lint job
 ## [0.2.1] - 2026-08-18
 
 ### ⚙️ Miscellaneous Tasks
