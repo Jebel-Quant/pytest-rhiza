@@ -1,0 +1,56 @@
+[project]
+name = "pytest-rhiza"
+version = "0.1.0"
+description = "The rhiza repository checks, as a pytest plugin instead of a synced test folder"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Jebel Quant Research" }]
+keywords = ["pytest", "rhiza", "template", "repository-checks"]
+classifiers = [
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+]
+# Deliberately four small runtime dependencies and no more. These are exactly what
+# `make rhiza-test` provisions by hand today (`--with pytest --with pytest-timeout
+# --with python-dotenv --with packaging`), which is the argument for a dedicated
+# distribution: folding the checks into `rhiza` would drag jinja2, typer and rich into
+# every test environment, and into `rhiza-tools` would add pandas and plotly.
+dependencies = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.3",
+    "python-dotenv>=1.0",
+    "packaging>=24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/jebel-quant/pytest-rhiza"
+Repository = "https://github.com/jebel-quant/pytest-rhiza"
+Issues = "https://github.com/jebel-quant/pytest-rhiza/issues"
+
+# What replaces the synced conftest.py: the fixtures arrive by entry point, so a
+# consumer repo needs no conftest of its own and no `pythonpath` entry to find one.
+[project.entry-points.pytest11]
+rhiza = "pytest_rhiza.plugin"
+
+[dependency-groups]
+test = ["pytest>=8.0", "pytest-cov>=6.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytest_rhiza"]
+
+# bump-my-version reads [project].version natively; /rhiza:release owns the commit and
+# the tag. Asserted by this package's own checks/test_pyproject.py, run against itself.
+[tool.bumpversion]
+allow_dirty = false
+commit = false
+tag = false
