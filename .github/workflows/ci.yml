@@ -15,6 +15,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: prek (pre-commit hooks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Exact version, not a floating major: astral-sh/setup-uv publishes no `v8`,
+      # `v9` or `v10` alias tag, so `@v10` fails to resolve at job start.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # prek is the Rust drop-in for pre-commit and reads .pre-commit-config.yaml
+      # unchanged. `uvx` fetches it, so there is no separate install step — the same
+      # command `make lint` runs locally.
+      #
+      # The ruff hooks rewrite files with `--fix` and `ruff format`; --show-diff-on-failure
+      # prints what they would have changed, so a red run says which edit to make.
+      - name: Run hooks
+        run: uvx prek run --all-files --show-diff-on-failure
+
   test:
     name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}

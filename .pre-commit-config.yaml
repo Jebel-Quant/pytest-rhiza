@@ -1,0 +1,20 @@
+# Hooks are run by prek (`make lint`), the Rust drop-in for pre-commit. The file
+# format is pre-commit's, so `pre-commit run` works against it unchanged.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  # ruff.toml is the single source of truth for both rules and formatting.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
