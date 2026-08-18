@@ -1,3 +1,9 @@
+## [0.2.1] - 2026-08-18
+
+### ⚙️ Miscellaneous Tasks
+
+- Add rhiza_release.yml release workflow
+- Drop conda and devcontainer jobs from rhiza_release
 ## [0.2.0] - 2026-08-18
 
 ### 🚀 Features
