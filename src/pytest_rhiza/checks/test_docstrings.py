@@ -175,46 +175,57 @@ def _iter_loose_modules(logger, folder: Path):
         yield module
 
 
-def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
-    """Run doctests for every module in the configured folders."""
-    values = dotenv_values(root / RHIZA_ENV_PATH) if (root / RHIZA_ENV_PATH).exists() else {}
-    folders = _doctest_folders(root, values)
+def _iter_package_modules(logger, monkeypatch, src_path: Path, import_root: Path):
+    """Yield the modules of every package under one configured folder.
 
-    logger.info("Starting doctest discovery in: %s", [str(f) for f in folders] or "(nothing configured)")
-    if not folders:
-        configured = os.environ.get(DOCTEST_FOLDERS_ENV) or values.get("SOURCE_FOLDER") or "src"
-        logger.info("No doctest folder exists (looked for: %s) — skipping doctests", configured)
-        pytest.skip(f"No doctest folder found (looked for: {configured})")
+    Args:
+        logger: The test logger.
+        monkeypatch: The test's monkeypatch fixture, for :func:`_evict_shadowing_package`.
+        src_path: The configured folder being walked.
+        import_root: The directory prepended to ``sys.path`` for that folder.
 
-    total_tests = 0
-    total_failures = 0
-    failed_modules = []
+    Yields:
+        Each imported module. A package that cannot be walked is warned about and
+        skipped, for the same reason a module is: not measuring something is a different
+        statement from finding it wrong.
+    """
+    # No `is_dir() and (package_dir / "__init__.py").exists()` guard: the inline version
+    # had one, and inverting it to a `continue` made visible that it can never fire.
+    # `_find_packages` globs `__init__.py` and yields each match's parent, so both halves
+    # are true by construction — the guard was an uncoverable branch asserting the
+    # postcondition of the generator two lines above it.
+    for package_dir in _find_packages(src_path):
+        package_name = package_dir.name
+        logger.info("Discovered package: %s", package_name)
+        _evict_shadowing_package(monkeypatch, logger, import_root, package_dir)
+        try:
+            modules = list(_iter_modules_from_path(logger, package_dir, import_root))
+        except ImportError as e:
+            warnings.warn(f"Could not import package {package_name}: {e}", stacklevel=2)
+            logger.warning("Could not import package %s: %s", package_name, e)
+            continue
+        logger.debug("%d module(s) found in package %s", len(modules), package_name)
+        yield from modules
 
-    def _run(module) -> None:
-        """Run one module's doctests and fold the result into the running totals."""
-        nonlocal total_tests, total_failures
-        logger.debug("Running doctests for module: %s", module.__name__)
-        # Disable pytest's stdout capture during doctest to avoid interference
-        with capsys.disabled():
-            results = doctest.testmod(
-                module,
-                verbose=False,
-                optionflags=(doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE),
-            )
-        total_tests += results.attempted
 
-        if results.failed:
-            logger.warning(
-                "Doctests failed for %s: %d/%d failed",
-                module.__name__,
-                results.failed,
-                results.attempted,
-            )
-            total_failures += results.failed
-            failed_modules.append((module.__name__, results.failed, results.attempted))
-        else:
-            logger.debug("Doctests passed for %s (%d test(s))", module.__name__, results.attempted)
+def _iter_doctest_modules(logger, monkeypatch, folders: list[Path]):
+    """Yield every module to doctest, across folders, packages and loose scripts.
 
+    The three-deep walk that used to sit inline in :func:`test_doctests`. Pulling it out
+    is what lets that test read as "measure each module, then report", because the
+    discovery rules — which folder is its own package, which packages a folder holds,
+    which scripts no package walk reaches — are all answered here.
+
+    Args:
+        logger: The test logger.
+        monkeypatch: The test's monkeypatch fixture, so both the ``sys.path`` prepend and
+            any ``sys.modules`` eviction are undone at teardown.
+        folders: The configured folders that exist, from :func:`_doctest_folders`.
+
+    Yields:
+        Every importable module found, packages first and then loose scripts, in folder
+        order.
+    """
     for src_path in folders:
         # A configured folder may *be* a package rather than contain them: a flat-layout
         # project names its package directly, so `SOURCE_FOLDER=mypackage`. Its modules
@@ -228,41 +239,147 @@ def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.
         monkeypatch.syspath_prepend(str(import_root))
         logger.debug("Prepended to sys.path: %s", import_root)
 
-        # Find all packages in the folder (supports namespace packages)
-        for package_dir in _find_packages(src_path):
-            if package_dir.is_dir() and (package_dir / "__init__.py").exists():
-                # Import the package
-                package_name = package_dir.name
-                logger.info("Discovered package: %s", package_name)
-                _evict_shadowing_package(monkeypatch, logger, import_root, package_dir)
-                try:
-                    modules = list(_iter_modules_from_path(logger, package_dir, import_root))
-                    logger.debug("%d module(s) found in package %s", len(modules), package_name)
-
-                    for module in modules:
-                        _run(module)
-
-                except ImportError as e:
-                    warnings.warn(f"Could not import package {package_name}: {e}", stacklevel=2)
-                    logger.warning("Could not import package %s: %s", package_name, e)
-                    continue
+        yield from _iter_package_modules(logger, monkeypatch, src_path, import_root)
 
         # And the loose scripts, which no package walk reaches
-        for module in _iter_loose_modules(logger, src_path):
-            _run(module)
+        yield from _iter_loose_modules(logger, src_path)
 
-    if failed_modules:
-        formatted = "\n".join(f"  {name}: {failed}/{attempted} failed" for name, failed, attempted in failed_modules)
-        msg = (
-            f"Doctest summary: {total_tests} tests across {len(failed_modules)} module(s)\n"
-            f"Failures: {total_failures}\n"
+
+class _Tally:
+    """Running doctest totals across every module measured.
+
+    Replaces three locals and a ``nonlocal`` closure. The closure worked, but it meant
+    the accumulation could only be read inside :func:`test_doctests` — and the failure
+    message had to be assembled there too, which is most of why that function ranked
+    C (19).
+
+    Attributes:
+        attempted: Examples run across all modules.
+        failed: Examples that failed across all modules.
+        failures: One ``(module name, failed, attempted)`` triple per failing module.
+    """
+
+    def __init__(self) -> None:
+        """Start empty."""
+        self.attempted = 0
+        self.failed = 0
+        self.failures: list[tuple[str, int, int]] = []
+
+    def record(self, name: str, attempted: int, failed: int) -> None:
+        """Fold one module's result into the totals.
+
+        Args:
+            name: The module's dotted name, as it should appear in the summary.
+            attempted: Examples run in that module.
+            failed: Examples that failed in that module.
+        """
+        self.attempted += attempted
+        self.failed += failed
+        if failed:
+            self.failures.append((name, failed, attempted))
+
+    @property
+    def message(self) -> str:
+        """Return the assertion message naming every failing module.
+
+        Returns:
+            The summary, unchanged from the inline version — ``tests/`` asserts on the
+            ``"Doctest summary"`` prefix, and a reader who has seen a red run before
+            should not have to learn a new shape.
+        """
+        formatted = "\n".join(f"  {name}: {failed}/{attempted} failed" for name, failed, attempted in self.failures)
+        return (
+            f"Doctest summary: {self.attempted} tests across {len(self.failures)} module(s)\n"
+            f"Failures: {self.failed}\n"
             f"Failed modules:\n{formatted}"
         )
-        logger.error("%s", msg)
-        assert total_failures == 0, msg
-    else:
-        logger.info("Doctest summary: %d tests, 0 failures", total_tests)
 
-    if total_tests == 0:
+
+def _measure(logger, capsys: pytest.CaptureFixture[str], module) -> doctest.TestResults:
+    """Run one module's doctests.
+
+    Args:
+        logger: The test logger.
+        capsys: The capture fixture, disabled around the run so doctest's own comparison
+            of stdout is not competing with pytest's.
+        module: The imported module to measure.
+
+    Returns:
+        doctest's attempted/failed counts for that module.
+    """
+    logger.debug("Running doctests for module: %s", module.__name__)
+    with capsys.disabled():
+        return doctest.testmod(
+            module,
+            verbose=False,
+            optionflags=(doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE),
+        )
+
+
+def _configured_label(values: dict) -> str:
+    """Return the folder spec as it was configured, for the skip message.
+
+    The skip has to name what was *asked for* rather than what was found — "no doctest
+    folder found (looked for: utils)" is actionable and "no doctest folder found" is not.
+    That means re-reading the same precedence :func:`_doctest_folders` applied, which is
+    why this is a function rather than a local.
+
+    Args:
+        values: The parsed ``.rhiza/.env`` mapping.
+
+    Returns:
+        The environment variable, else ``SOURCE_FOLDER``, else ``src``.
+    """
+    return os.environ.get(DOCTEST_FOLDERS_ENV) or values.get("SOURCE_FOLDER") or "src"
+
+
+def _measure_all(logger, capsys: pytest.CaptureFixture[str], monkeypatch, folders: list[Path]) -> _Tally:
+    """Doctest every module the folders yield and return the totals.
+
+    Args:
+        logger: The test logger.
+        capsys: The capture fixture, passed through to :func:`_measure`.
+        monkeypatch: The test's monkeypatch fixture, passed through to the walk.
+        folders: The configured folders that exist.
+
+    Returns:
+        The tally, whose ``failures`` is what the gate asserts on.
+    """
+    tally = _Tally()
+    for module in _iter_doctest_modules(logger, monkeypatch, folders):
+        results = _measure(logger, capsys, module)
+        tally.record(module.__name__, results.attempted, results.failed)
+        if results.failed:
+            logger.warning(
+                "Doctests failed for %s: %d/%d failed",
+                module.__name__,
+                results.failed,
+                results.attempted,
+            )
+        else:
+            logger.debug("Doctests passed for %s (%d test(s))", module.__name__, results.attempted)
+    return tally
+
+
+def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    """Run doctests for every module in the configured folders."""
+    values = dotenv_values(root / RHIZA_ENV_PATH) if (root / RHIZA_ENV_PATH).exists() else {}
+    folders = _doctest_folders(root, values)
+
+    logger.info("Starting doctest discovery in: %s", [str(f) for f in folders] or "(nothing configured)")
+    if not folders:
+        configured = _configured_label(values)
+        logger.info("No doctest folder exists (looked for: %s) — skipping doctests", configured)
+        pytest.skip(f"No doctest folder found (looked for: {configured})")
+
+    tally = _measure_all(logger, capsys, monkeypatch, folders)
+
+    if tally.failures:
+        logger.error("%s", tally.message)
+        assert not tally.failures, tally.message
+
+    logger.info("Doctest summary: %d tests, 0 failures", tally.attempted)
+
+    if tally.attempted == 0:
         logger.info("No doctests were found in any module — skipping")
         pytest.skip("No doctests were found in any module")
