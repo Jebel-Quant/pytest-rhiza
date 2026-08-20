@@ -64,6 +64,102 @@ def should_skip(flags: str) -> bool:
     return SKIP_FLAG in flags
 
 
+def _holds_a_command(code: str) -> bool:
+    r"""Report whether a fence holds anything besides blank lines and comments.
+
+    Args:
+        code: The fence body.
+
+    Returns:
+        True when at least one non-comment, non-blank line is present.
+
+    Examples:
+        >>> _holds_a_command("make test\n")
+        True
+        >>> _holds_a_command("# just explaining\n#\n\n")
+        False
+        >>> _holds_a_command("")
+        False
+
+        An inline comment does not make the line a comment:
+
+        >>> _holds_a_command("make test  # runs the suite")
+        True
+    """
+    lines = [line.strip() for line in code.split("\n") if line.strip()]
+    return any(not line.startswith("#") for line in lines)
+
+
+def skip_reason(flags: str, code: str) -> str | None:
+    r"""Return why a bash fence needs no parsing, or None when it should be parsed.
+
+    The three exclusions are each here for a different reason, which is why this returns
+    the reason rather than a bool: the caller logs it, and "skipped 4 of 6 fences" with
+    no explanation is the kind of green that hides a mistake.
+
+    Args:
+        flags: Text following the language identifier on the opening fence line.
+        code: The fence body.
+
+    Returns:
+        A short phrase naming the exclusion, or None to parse the fence.
+
+    Examples:
+        >>> skip_reason("", "make test") is None
+        True
+        >>> skip_reason(" +RHIZA_SKIP", "make test")
+        '+RHIZA_SKIP flag'
+
+        A directory tree is prose drawn with box characters, not shell:
+
+        >>> skip_reason("", "src/\n\u251c\u2500\u2500 pytest_rhiza/")
+        'directory tree representation'
+
+        A comment-only fence has nothing to parse and no way to be wrong:
+
+        >>> skip_reason("", "# see the Makefile")
+        'only comments'
+
+        Order matters where a fence qualifies twice — the flag is the author's explicit
+        instruction, so it is reported ahead of anything inferred:
+
+        >>> skip_reason(" +RHIZA_SKIP", "# see the Makefile")
+        '+RHIZA_SKIP flag'
+    """
+    if should_skip(flags):
+        return f"{SKIP_FLAG} flag"
+    if any(marker in code for marker in TREE_MARKERS):
+        return "directory tree representation"
+    if not _holds_a_command(code):
+        return "only comments"
+    return None
+
+
+def classify_bash_blocks(content: str) -> list[tuple[int, str, str | None]]:
+    r"""Return every bash fence in a markdown document, with its exclusion verdict.
+
+    Args:
+        content: The markdown source.
+
+    Returns:
+        One ``(index, code, skip_reason)`` triple per fence, in document order. The index
+        is the fence's position among *all* bash fences, so a failure message names the
+        same block a reader counting fences would.
+
+    Examples:
+        >>> doc = "```bash\nmake test\n```\n\n```bash +RHIZA_SKIP\nrm -rf /\n```\n"
+        >>> [(i, reason) for i, _code, reason in classify_bash_blocks(doc)]
+        [(0, None), (1, '+RHIZA_SKIP flag')]
+
+        A document with no bash fences is empty rather than an error — a Rust project's
+        README may legitimately have none:
+
+        >>> classify_bash_blocks("# Title\n")
+        []
+    """
+    return [(index, code, skip_reason(flags, code)) for index, (flags, code) in enumerate(BASH_BLOCK.findall(content))]
+
+
 @functools.cache
 def bash_usable() -> bool:
     r"""Return True when ``bash -n`` actually parses a trivially valid snippet.

@@ -12,7 +12,89 @@ import subprocess
 from pathlib import Path
 
 from pytest_rhiza import _fences
-from pytest_rhiza._fences import BASH_BLOCK, CODE_BLOCK, bash_usable, should_skip
+from pytest_rhiza._fences import BASH_BLOCK, CODE_BLOCK, bash_usable, classify_bash_blocks, should_skip, skip_reason
+
+
+class TestSkipReason:
+    """Tests for the exclusion verdict that decides which bash fences are parsed.
+
+    Extracted from ``checks/test_readme.py`` in #35, where the three exclusions were
+    inline ``continue`` branches inside the test and so could only be exercised end to
+    end, through a subject repository and a README. They are a pure function of
+    ``(flags, code)`` now, so the edges get direct tests.
+    """
+
+    def test_a_plain_command_fence_is_parsed(self) -> None:
+        """No exclusion applies, so the fence goes to `bash -n`."""
+        assert skip_reason("", "make test") is None
+
+    def test_the_skip_flag_excludes(self) -> None:
+        """The author's explicit opt-out is honoured and named."""
+        assert skip_reason(" +RHIZA_SKIP", "make test") == "+RHIZA_SKIP flag"
+
+    def test_a_directory_tree_is_excluded(self) -> None:
+        """Box-drawing characters mean the fence is prose, not shell."""
+        assert skip_reason("", "src/\n├── pytest_rhiza/") == "directory tree representation"
+        assert skip_reason("", "a\n└── b") == "directory tree representation"
+        assert skip_reason("", "a\n│ b") == "directory tree representation"
+
+    def test_a_comment_only_fence_is_excluded(self) -> None:
+        """Nothing to parse, and no way for it to be wrong."""
+        assert skip_reason("", "# see the Makefile") == "only comments"
+        assert skip_reason("", "# one\n# two\n\n") == "only comments"
+
+    def test_an_empty_fence_is_excluded(self) -> None:
+        """An empty body holds no command, so it is the comment-only case."""
+        assert skip_reason("", "") == "only comments"
+        assert skip_reason("", "\n  \n") == "only comments"
+
+    def test_an_inline_comment_does_not_exclude(self) -> None:
+        """A trailing comment leaves a command on the line, which must still parse."""
+        assert skip_reason("", "make test  # runs the suite") is None
+
+    def test_a_command_after_a_comment_does_not_exclude(self) -> None:
+        """One real line among comments is enough to be worth parsing."""
+        assert skip_reason("", "# explain\nmake test") is None
+
+    def test_the_flag_is_reported_ahead_of_an_inferred_reason(self) -> None:
+        """Where a fence qualifies twice, the explicit instruction is what is reported.
+
+        Not cosmetic: the log line is how a reader learns why a fence went unchecked, and
+        "the author excluded it" and "we decided it was a tree" are different facts.
+        """
+        assert skip_reason(" +RHIZA_SKIP", "# see the Makefile") == "+RHIZA_SKIP flag"
+        assert skip_reason(" +RHIZA_SKIP", "a\n└── b") == "+RHIZA_SKIP flag"
+
+
+class TestClassifyBashBlocks:
+    """Tests for enumerating a document's bash fences with their verdicts."""
+
+    def test_indexes_count_every_fence_including_excluded_ones(self) -> None:
+        """The index names the fence a reader counting fences would name.
+
+        This is the reason the index is carried rather than recomputed over the parsed
+        subset: "Bash block 2 has syntax errors" has to mean the third fence in the file,
+        not the third *checked* one.
+        """
+        doc = "```bash +RHIZA_SKIP\nrm -rf /\n```\n```bash\n# just a note\n```\n```bash\nmake test\n```\n"
+        assert [(i, reason) for i, _code, reason in classify_bash_blocks(doc)] == [
+            (0, "+RHIZA_SKIP flag"),
+            (1, "only comments"),
+            (2, None),
+        ]
+
+    def test_a_document_with_no_bash_fences_is_empty(self) -> None:
+        """A Rust or Go README may legitimately have none; that is not an error."""
+        assert classify_bash_blocks("# Title\n\nProse only.\n") == []
+
+    def test_python_fences_are_not_collected(self) -> None:
+        """Only bash fences — the python half belongs to test_readme_validation."""
+        assert classify_bash_blocks("```python\nprint(1)\n```\n") == []
+
+    def test_the_fence_body_is_returned_verbatim(self) -> None:
+        """The body is what gets piped to `bash -n`, so it must not be reshaped."""
+        [(_index, code, _reason)] = classify_bash_blocks("```bash\nmake test\nmake lint\n```\n")
+        assert code == "make test\nmake lint\n"
 
 
 class TestSkipFlag:
