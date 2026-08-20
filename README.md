@@ -172,6 +172,22 @@ uv sync
 uv run pytest
 ```
 
+`make help` lists the gates. Every one of them is what CI runs, so a green local sweep
+means a green pipeline:
+
+| target | what it runs |
+| --- | --- |
+| `make lint` | all pre-commit hooks, via prek |
+| `make typecheck` | `ty check src` |
+| `make docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
+| `make security` | bandit over `src` |
+| `make test` | the suite, with the 90% coverage gate |
+
+`typecheck`, `docs-coverage` and `security` take their flags from the reusable workflow
+`jebel-quant/rhiza/.github/workflows/rhiza_ci.yml`, so the recipes mirror those jobs
+rather than setting a threshold of their own — see the comment above them in the
+`Makefile`.
+
 The checks run against this repository too — it is a Python project with a README, a
 `pyproject.toml` and a release config, so it is a valid subject for its own assertions:
 
