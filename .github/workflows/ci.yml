@@ -103,3 +103,56 @@ jobs:
       # dependency propagates into every consumer's test environment.
       - name: Audit dependencies
         run: uvx pip-audit
+
+  self-check:
+    name: Rhiza checks, self-applied (with tags)
+    runs-on: ubuntu-latest
+
+    # Why this job exists, when `(RHIZA) CI` already has a "Rhiza repository checks" job:
+    # that job is green while two of its assertions never run. Its log reads
+    #
+    #     SKIPPED [1] .../checks/test_release_tags.py:25: No version tags found in repository
+    #     SKIPPED [1] .../checks/test_pyproject.py:334: No version tags found in repository
+    #     32 passed, 2 skipped
+    #
+    # This repository has tags — v0.2.0, v0.2.1, v0.2.2 — so those are not honest skips.
+    # The reusable workflow's `actions/checkout` fetches none, `latest_tag` finds none, and
+    # the two assertions that compare [project].version against the newest vX.Y.Z skip. A
+    # gate that skips is not a gate, and a green job reporting coverage it does not have is
+    # worse than a red one (#34).
+    #
+    # The real fix is `fetch-tags`/`fetch-depth: 0` in
+    # jebel-quant/rhiza/.github/workflows/rhiza_ci.yml, which is upstream and not editable
+    # here. This job is the local counterpart: it runs the same two modules against this
+    # repository with the history they need. Delete it once upstream fetches tags.
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The entire point. `fetch-tags` alone is not enough on a shallow clone — the
+          # tagged commits have to be present for `git rev-parse <tag>^{commit}` and
+          # `git branch --contains` to answer, and test_release_tags skips on both.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # `-rs` prints skip reasons, which is what the guard below reads. Only these two
+      # modules: they are the tag-dependent ones, and locally with tags present they are
+      # 28 passed / 0 skipped, so "no skips" is a bar this repo actually meets rather than
+      # an aspiration.
+      #
+      # The guard matters as much as the checkout. Fetching tags fixes the symptom today;
+      # asserting that nothing skipped is what stops the silent-skip failure mode coming
+      # back through some other change, which is the actual defect in #34.
+      - name: Run the tag-dependent checks against this repository
+        run: |
+          set -o pipefail
+          uv run --group test pytest -q -rs --pyargs \
+            pytest_rhiza.checks.test_release_tags \
+            pytest_rhiza.checks.test_pyproject | tee checks.log
+          if grep -q "skipped" checks.log; then
+            echo "::error::A tag-dependent check skipped. A skipped assertion reads as a pass, which is the defect this job exists to prevent (#34)."
+            exit 1
+          fi
