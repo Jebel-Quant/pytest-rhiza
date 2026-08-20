@@ -90,6 +90,15 @@ filename = "src/pytest_rhiza/__init__.py"
 search = "__version__ = \"{current_version}\""
 replace = "__version__ = \"{new_version}\""
 
+# Source modules in src/pytest_rhiza/checks/ are deliberately named test_*.py because
+# they are pytest check modules collected out of site-packages via `--pyargs`. Mirroring
+# them with tests/pytest_rhiza/checks/test_test_*.py would produce nonsensical file names
+# and break the published interface. Tests are instead organised by behaviour in the
+# top-level tests/ directory (test_checks.py, test_fences.py, test_plugin.py).
+[tool.check_test_layout]
+enforce = false
+reason = "Source modules are deliberately named test_*.py — they are pytest check modules collected via --pyargs from site-packages. Mirroring them would require test_test_*.py filenames and break the published interface. Tests are organised by behaviour (test_checks.py, test_fences.py, test_plugin.py) instead."
+
 # Without this the coverage number for this package is meaningless. The checks are
 # *tests*: they are exercised by naming them on an inner `pytest --pyargs` command line
 # in a subprocess, never by importing them, so a coverage run that only watches the
