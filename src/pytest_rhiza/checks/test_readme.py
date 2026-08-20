@@ -27,7 +27,31 @@ from pathlib import Path
 
 import pytest
 
-from pytest_rhiza._fences import BASH, BASH_BLOCK, SKIP_FLAG, TREE_MARKERS, bash_usable, should_skip
+from pytest_rhiza._fences import BASH, bash_usable, classify_bash_blocks
+
+
+def _assert_parses(index: int, code: str) -> None:
+    """Fail the test unless ``bash -n`` accepts one fence.
+
+    Args:
+        index: The fence's position among all bash fences, for the failure message.
+        code: The fence body.
+
+    Raises:
+        Failed: via :func:`pytest.fail`, when bash rejects the snippet.
+    """
+    result = subprocess.run(  # nosec B603 B607 - `bash -n` parses without executing
+        [BASH, "-n"],
+        input=code,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return
+    # stdout as well as stderr: a bash that fails for a reason other than syntax tends to
+    # explain itself on stdout, and a blank error is the least actionable failure there is.
+    detail = (result.stderr + result.stdout).strip() or f"exited {result.returncode}, saying nothing"
+    pytest.fail(f"Bash block {index} has syntax errors:\nCode:\n{code}\nError:\n{detail}")
 
 
 class TestReadmeExists:
@@ -59,42 +83,20 @@ class TestReadmeBashFragments:
         Skips where no working bash exists — see :func:`pytest_rhiza._fences.bash_usable`.
         A README's fences are the same text on every platform, so one runner that can
         parse them is enough; a runner that cannot must not invent syntax errors.
+
+        Which fences are excluded, and why, is
+        :func:`pytest_rhiza._fences.classify_bash_blocks` — doctested there rather than
+        settled inline here.
         """
         if not bash_usable():
             pytest.skip("no working `bash -n` on this platform; README fences unchecked")
 
-        content = (root / "README.md").read_text(encoding="utf-8")
-        bash_blocks = BASH_BLOCK.findall(content)
+        blocks = classify_bash_blocks((root / "README.md").read_text(encoding="utf-8"))
+        logger.info("Found %d bash code block(s) in README", len(blocks))
 
-        logger.info("Found %d bash code block(s) in README", len(bash_blocks))
-
-        for i, (flags, code) in enumerate(bash_blocks):
-            if should_skip(flags):
-                logger.info("Skipping bash block %d (%s flag)", i, SKIP_FLAG)
+        for index, code, reason in blocks:
+            if reason is not None:
+                logger.info("Skipping bash block %d (%s)", index, reason)
                 continue
-
-            if any(marker in code for marker in TREE_MARKERS):
-                logger.info("Skipping bash block %d (directory tree representation)", i)
-                continue
-
-            # A block that is only comments has nothing to parse and no way to be wrong.
-            lines = [line.strip() for line in code.split("\n") if line.strip()]
-            if not [line for line in lines if not line.startswith("#")]:
-                logger.info("Skipping bash block %d (only comments)", i)
-                continue
-
-            logger.debug("Checking bash block %d:\n%s", i, code)
-
-            result = subprocess.run(  # nosec B603 B607 - `bash -n` parses without executing
-                [BASH, "-n"],
-                input=code,
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode != 0:
-                # stdout as well as stderr: a bash that fails for a reason other than
-                # syntax tends to explain itself on stdout, and a blank error is the
-                # least actionable failure there is.
-                detail = (result.stderr + result.stdout).strip() or f"exited {result.returncode}, saying nothing"
-                pytest.fail(f"Bash block {i} has syntax errors:\nCode:\n{code}\nError:\n{detail}")
+            logger.debug("Checking bash block %d:\n%s", index, code)
+            _assert_parses(index, code)
