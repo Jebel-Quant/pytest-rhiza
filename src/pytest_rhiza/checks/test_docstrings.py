@@ -30,6 +30,7 @@ import doctest
 import importlib
 import importlib.util
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -63,13 +64,58 @@ def _iter_modules_from_path(logger, package_path: Path, src_path: Path):
 
 
 def _find_packages(src_path: Path):
-    """Find all packages in the source path, including those nested under namespace packages."""
-    for init_file in src_path.rglob("__init__.py"):
+    """Find all packages in the source path, including those nested under namespace packages.
+
+    Sorted, like :func:`_iter_loose_modules` already sorts its files: ``rglob`` yields in
+    filesystem order, so without this the packages are doctested in an order that varies
+    between machines — and one package importing another makes that order observable.
+    """
+    for init_file in sorted(src_path.rglob("__init__.py")):
         package_dir = init_file.parent
         # Only yield top-level packages (those whose parent doesn't have __init__.py or is src_path)
         parent = package_dir.parent
         if parent == src_path or not (parent / "__init__.py").exists():
             yield package_dir
+
+
+def _evict_shadowing_package(monkeypatch, logger, import_root: Path, package_dir: Path) -> None:
+    """Drop a same-named package already imported from somewhere other than this folder.
+
+    Without this the gate can report a pass having measured code that is not in the tree.
+    ``importlib.import_module`` resolves a submodule against the *already-imported*
+    parent's ``__path__``, and prepending a folder to ``sys.path`` does not change a
+    parent that is in ``sys.modules`` already. So where a package under the configured
+    folder shares its top-level name with an installed distribution, the installed copy is
+    what gets doctested — silently, and reported as a skip when it happens to carry no
+    examples.
+
+    That is not hypothetical for pytest-rhiza itself, which is always installed (it is the
+    plugin running this check), so for three releases its own new modules were invisible
+    here. Any project whose source package name collides with something in its environment
+    inherits the same hole.
+
+    Args:
+        monkeypatch: The test's monkeypatch fixture, so ``sys.modules`` is restored at
+            teardown rather than left mutated for the rest of the session.
+        logger: The test logger.
+        import_root: The directory prepended to ``sys.path`` for this folder.
+        package_dir: The package about to be walked.
+    """
+    top_level = package_dir.relative_to(import_root).parts[0]
+    existing = sys.modules.get(top_level)
+    if existing is None:
+        return
+    located = [Path(entry).resolve() for entry in getattr(existing, "__path__", [])]
+    if (import_root / top_level).resolve() in located:
+        return  # already the folder under test; nothing is being shadowed
+    logger.info(
+        "Evicting cached package %s (imported from %s) so %s is what gets measured",
+        top_level,
+        [str(path) for path in located] or "an unknown location",
+        import_root / top_level,
+    )
+    for cached in [name for name in list(sys.modules) if name == top_level or name.startswith(f"{top_level}.")]:
+        monkeypatch.delitem(sys.modules, cached, raising=False)
 
 
 def _doctest_folders(root: Path, values: dict) -> list[Path]:
@@ -188,6 +234,7 @@ def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.
                 # Import the package
                 package_name = package_dir.name
                 logger.info("Discovered package: %s", package_name)
+                _evict_shadowing_package(monkeypatch, logger, import_root, package_dir)
                 try:
                     modules = list(_iter_modules_from_path(logger, package_dir, import_root))
                     logger.debug("%d module(s) found in package %s", len(modules), package_name)
