@@ -85,6 +85,11 @@ allow_dirty = false
 commit = false
 tag = false
 
+[[tool.bumpversion.files]]
+filename = "src/pytest_rhiza/__init__.py"
+search = "__version__ = \"{current_version}\""
+replace = "__version__ = \"{new_version}\""
+
 # Without this the coverage number for this package is meaningless. The checks are
 # *tests*: they are exercised by naming them on an inner `pytest --pyargs` command line
 # in a subprocess, never by importing them, so a coverage run that only watches the
