@@ -127,6 +127,52 @@ def _doctest_folders(root: Path, values: dict) -> list[Path]:
 
     Returns:
         Each configured folder that exists, in order, without duplicates.
+
+    Examples:
+        The precedence is the whole point of this function, so it is worth one runnable
+        example per rung. The environment is saved and restored because these lines
+        execute in whatever process is running the doctests.
+
+        >>> import os, tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _ = (root / "src").mkdir()
+        >>> _ = (root / "utils").mkdir()
+        >>> saved = os.environ.pop(DOCTEST_FOLDERS_ENV, None)
+
+        The variable wins, is whitespace-separated, and silently drops what does not
+        exist — a configured folder a project has since renamed is not an error:
+
+        >>> os.environ[DOCTEST_FOLDERS_ENV] = "src utils nope"
+        >>> [p.name for p in _doctest_folders(root, {})]
+        ['src', 'utils']
+
+        Unset, it falls back to ``SOURCE_FOLDER`` from ``.rhiza/.env``:
+
+        >>> del os.environ[DOCTEST_FOLDERS_ENV]
+        >>> [p.name for p in _doctest_folders(root, {"SOURCE_FOLDER": "utils"})]
+        ['utils']
+
+        …and to ``src`` when that is absent too:
+
+        >>> [p.name for p in _doctest_folders(root, {})]
+        ['src']
+
+        Duplicates collapse, so a folder named twice is walked once:
+
+        >>> os.environ[DOCTEST_FOLDERS_ENV] = "src src"
+        >>> [p.name for p in _doctest_folders(root, {})]
+        ['src']
+
+        Nothing configured that exists yields an empty list, which is what makes
+        :func:`test_doctests` skip rather than pass vacuously:
+
+        >>> os.environ[DOCTEST_FOLDERS_ENV] = "nope"
+        >>> _doctest_folders(root, {})
+        []
+
+        >>> _ = os.environ.pop(DOCTEST_FOLDERS_ENV, None)
+        >>> if saved is not None:
+        ...     os.environ[DOCTEST_FOLDERS_ENV] = saved
     """
     configured = os.environ.get(DOCTEST_FOLDERS_ENV, "").split()
     if not configured:

@@ -61,6 +61,29 @@ explicitly with `--pyargs`. One module per file the template used to sync, names
 | `test_cargo_toml` | `rust-core` | `.rhiza/tests/test_cargo_toml.py` |
 | `test_go_module` | `go-core` | `.rhiza/tests/test_go_module.py` |
 
+That table is not prose. The fence below enumerates what the installed package actually
+ships, and `make rhiza-test` executes it against this README — so adding or removing a
+check without updating the list above turns this block red:
+
+```python
+import pkgutil
+
+import pytest_rhiza.checks as checks
+
+for module in sorted(m.name for m in pkgutil.iter_modules(checks.__path__)):
+    print(module)
+```
+
+```result
+test_cargo_toml
+test_docstrings
+test_go_module
+test_pyproject
+test_readme
+test_readme_validation
+test_release_tags
+```
+
 ### Which repository is "root"
 
 The one deliberate behaviour change from the synced suite. `.rhiza/tests/conftest.py`

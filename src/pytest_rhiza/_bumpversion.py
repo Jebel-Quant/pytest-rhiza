@@ -69,6 +69,35 @@ def has_bumpversion_section(path: Path) -> bool:
         True when the file declares ``[tool.bumpversion]`` (TOML) or ``[bumpversion]``
         (INI). ``.bumpversion.toml`` nests the table under ``[tool]`` just as
         pyproject.toml does.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _ = (root / "pyproject.toml").write_text("[tool.bumpversion]")
+        >>> has_bumpversion_section(root / "pyproject.toml")
+        True
+
+        A file that exists but declares no section is False, not an error:
+
+        >>> _ = (root / "setup.cfg").write_text("[metadata]")
+        >>> has_bumpversion_section(root / "setup.cfg")
+        False
+
+        So is a file that is not there at all — the caller asks about candidates:
+
+        >>> has_bumpversion_section(root / ".bumpversion.toml")
+        False
+
+        And so is malformed TOML. "We could not read a section out of this" is the same
+        answer as "there is none", and the config gate reports the absence rather than
+        raising here:
+
+        >>> _ = (root / ".bumpversion.toml").write_text("[tool.bumpversion")
+        >>> has_bumpversion_section(root / ".bumpversion.toml")
+        False
+
+        Note the ``.cfg`` case above takes the containment branch, not the TOML parser —
+        an INI file is never handed to ``tomllib``.
     """
     if not path.is_file():
         return False
@@ -90,6 +119,23 @@ def discovered_configs(root: Path) -> list[str]:
 
     Returns:
         The matching names from :data:`DISCOVERABLE_CONFIGS`, in search order.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> discovered_configs(root)
+        []
+
+        Search order, not filesystem order — ``.bumpversion.toml`` is what
+        bump-my-version reads first, so it leads the list however it was written:
+
+        >>> _ = (root / "pyproject.toml").write_text("[tool.bumpversion]")
+        >>> _ = (root / ".bumpversion.toml").write_text("[tool.bumpversion]")
+        >>> discovered_configs(root)
+        ['.bumpversion.toml', 'pyproject.toml']
+
+        Two entries is the finding, not the goal: the second is a version location
+        nobody maintains. :func:`shadowing_configs` is what names it.
     """
     return [name for name in DISCOVERABLE_CONFIGS if has_bumpversion_section(root / name)]
 
@@ -105,6 +151,26 @@ def shadowing_configs(root: Path, winner: str) -> list[str]:
         Every other discoverable config that also declares a section. Whether those
         shadow the winner or are shadowed *by* it depends on search order — either way
         the second config is a version location nobody is maintaining.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _ = (root / ".bumpversion.toml").write_text("[tool.bumpversion]")
+        >>> shadowing_configs(root, ".bumpversion.toml")
+        []
+
+        A second section anywhere discoverable is reported, whichever way round the
+        search order puts them:
+
+        >>> _ = (root / "pyproject.toml").write_text("[tool.bumpversion]")
+        >>> shadowing_configs(root, ".bumpversion.toml")
+        ['pyproject.toml']
+
+        The winner need not exist for the question to be worth asking — a repo with only
+        the *wrong* config is exactly the case the gate is for:
+
+        >>> shadowing_configs(root, "setup.cfg")
+        ['.bumpversion.toml', 'pyproject.toml']
     """
     return [name for name in DISCOVERABLE_CONFIGS if name != winner and has_bumpversion_section(root / name)]
 
@@ -118,6 +184,20 @@ def legacy_config_hint(root: Path) -> str:
     Returns:
         The hint, with a leading space so it appends to a message, or ``""`` when the
         leftover file is absent.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> legacy_config_hint(root)
+        ''
+
+        Present, and the caller gets a sentence it can concatenate — note the leading
+        space, which is why this returns text rather than a bool:
+
+        >>> _ = (root / ".rhiza").mkdir()
+        >>> _ = (root / ".rhiza" / ".cfg.toml").write_text("[tool.bumpversion]")
+        >>> legacy_config_hint(root).startswith(" A leftover")
+        True
     """
     if not (root / LEGACY_CONFIG).is_file():
         return ""

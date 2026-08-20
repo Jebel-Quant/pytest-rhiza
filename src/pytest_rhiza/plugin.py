@@ -45,6 +45,61 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _resolve_root(
+    override: str | None,
+    inipath: pathlib.Path | None,
+    invocation_dir: pathlib.Path,
+) -> pathlib.Path:
+    """Pick the repository root from the three things that can name it.
+
+    Split out of the :func:`root` fixture so the resolution order is documented by
+    something that runs. A fixture needs a live pytest session to exercise, which is why
+    this ladder went undocumented-by-example for so long.
+
+    Args:
+        override: The ``--rhiza-root`` value, or None.
+        inipath: Path to the config file pytest found, or None when there is none.
+        invocation_dir: The directory pytest was invoked from.
+
+    Returns:
+        The repository root.
+
+    Examples:
+        These read results back through ``.as_posix()`` and ``.name`` rather than
+        repr'ing the ``Path``. ``repr`` would print ``PosixPath`` here and
+        ``WindowsPath`` on the Windows leg of the matrix, so a doctest asserting it
+        would measure the platform instead of the ladder.
+
+        ``--rhiza-root`` wins outright, over both of the other two:
+
+        >>> _resolve_root("/repo", pathlib.Path("/ini/pytest.ini"), pathlib.Path("/cwd")).name
+        'repo'
+
+        With no override, the directory holding the config file:
+
+        >>> _resolve_root(None, pathlib.Path("/repo/pytest.ini"), pathlib.Path("/cwd")).as_posix()
+        '/repo'
+
+        With neither, the invocation directory — *not* ``rootpath``, which under
+        ``--pyargs`` can point into site-packages:
+
+        >>> _resolve_root(None, None, pathlib.Path("/repo")).as_posix()
+        '/repo'
+
+        An empty ``--rhiza-root`` is treated as absent rather than as the current
+        directory, so a shell expanding an unset variable falls through to the ladder
+        instead of silently checking the wrong tree:
+
+        >>> _resolve_root("", pathlib.Path("/repo/pytest.ini"), pathlib.Path("/cwd")).as_posix()
+        '/repo'
+    """
+    if override:
+        return pathlib.Path(override).absolute()
+    if inipath is not None:
+        return inipath.parent
+    return pathlib.Path(invocation_dir)
+
+
 @pytest.fixture(scope="session")
 def root(pytestconfig: pytest.Config) -> pathlib.Path:
     """Return the repository under test as a :class:`pathlib.Path`.
@@ -61,18 +116,19 @@ def root(pytestconfig: pytest.Config) -> pathlib.Path:
     rather than at the project. The invocation directory cannot: ``make rhiza-test``
     runs at the repository root.
 
+    The ladder itself lives in :func:`_resolve_root`, where it is doctested.
+
     Args:
         pytestconfig: The session's pytest config.
 
     Returns:
         The repository root.
     """
-    override = pytestconfig.getoption("rhiza_root")
-    if override:
-        return pathlib.Path(override).absolute()
-    if pytestconfig.inipath is not None:
-        return pytestconfig.inipath.parent
-    return pathlib.Path(pytestconfig.invocation_params.dir)
+    return _resolve_root(
+        pytestconfig.getoption("rhiza_root"),
+        pytestconfig.inipath,
+        pathlib.Path(pytestconfig.invocation_params.dir),
+    )
 
 
 @pytest.fixture(scope="session")
