@@ -15,7 +15,6 @@ reports success, and "0 passed" is the shape that failure takes.
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import only for the fixture's type
@@ -322,28 +321,3 @@ class TestTagAgreement:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "No version tags found" in result.stdout, result.stdout
-
-
-
-class TestPackageVersionConsistency:
-    """``pytest_rhiza.__version__`` must stay in step with ``[project].version``."""
-
-    def test_dunder_version_matches_pyproject(self) -> None:
-        """``__version__`` must equal the version declared in pyproject.toml.
-
-        bump-my-version updates both through the ``[[tool.bumpversion.files]]`` entry
-        in pyproject.toml.  If the two drift the entry is missing or misconfigured.
-        """
-        import tomllib
-
-        import pytest_rhiza
-
-        root = Path(__file__).parent.parent
-        with (root / "pyproject.toml").open("rb") as fh:
-            pyproject_version = tomllib.load(fh)["project"]["version"]
-
-        assert pytest_rhiza.__version__ == pyproject_version, (
-            f"pytest_rhiza.__version__ {pytest_rhiza.__version__!r} does not match "
-            f"[project].version {pyproject_version!r} in pyproject.toml. "
-            "Ensure [[tool.bumpversion.files]] targets src/pytest_rhiza/__init__.py."
-        )

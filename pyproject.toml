@@ -85,6 +85,11 @@ allow_dirty = false
 commit = false
 tag = false
 
+# One [[files]] entry per *additional* place the version is written — never for
+# [project].version itself, which is read natively. `pytest_rhiza.__version__` is the
+# only other place, and it sat three releases stale because this entry was described in
+# a comment but never written (#12). tests/test_version.py asserts both halves: that the
+# two numbers agree, and that this entry still exists to keep them agreeing.
 [[tool.bumpversion.files]]
 filename = "src/pytest_rhiza/__init__.py"
 search = "__version__ = \"{current_version}\""
