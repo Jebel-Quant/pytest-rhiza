@@ -29,36 +29,16 @@ from pathlib import Path
 import pytest
 from packaging.version import Version
 
+from pytest_rhiza._bumpversion import (
+    DISCOVERABLE_CONFIGS,
+    assert_release_flow_owns_the_commit_and_the_tag,
+    discovered_configs,
+    legacy_config_hint,
+    shadowing_configs,
+)
+
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
 _REQUIRED_PROJECT_FIELDS = ("name", "version", "description", "readme", "requires-python", "license", "authors")
-
-# The only filenames bump-my-version auto-discovers. Anything else — including the
-# `.rhiza/.cfg.toml` older template versions shipped — is read solely when passed
-# with --config-file, which nothing in this template does.
-_DISCOVERABLE_CONFIGS = (".bumpversion.toml", ".bumpversion.cfg", "setup.cfg", "pyproject.toml")
-
-
-def _has_bumpversion_section(path: Path) -> bool:
-    """Report whether a config file carries a bumpversion section at all.
-
-    Args:
-        path: Candidate config file; a missing or malformed file counts as absent.
-
-    Returns:
-        True when the file declares ``[tool.bumpversion]`` (TOML) or ``[bumpversion]``
-        (INI). ``.bumpversion.toml`` nests the table under ``[tool]`` just as
-        pyproject.toml does.
-    """
-    if not path.is_file():
-        return False
-    if path.suffix == ".cfg":
-        return "[bumpversion]" in path.read_text(encoding="utf-8")
-    try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except tomllib.TOMLDecodeError:
-        return False
-    return isinstance(data.get("tool", {}).get("bumpversion"), dict)
 
 
 @pytest.fixture(scope="module")
@@ -267,18 +247,12 @@ class TestBumpversionConfigIsDiscoverable:
 
     def test_a_discoverable_config_exists(self, root: Path, pyproject: dict, declared_version: str) -> None:
         """A bumpversion section must live in a file bump-my-version actually reads."""
-        found = [name for name in _DISCOVERABLE_CONFIGS if _has_bumpversion_section(root / name)]
-        hint = ""
-        if (root / ".rhiza" / ".cfg.toml").is_file():
-            hint = (
-                " A leftover .rhiza/.cfg.toml is present: that path is never auto-discovered "
-                "(it predates the fix for issue #1453) and can be deleted."
-            )
-        assert found, (
+        assert discovered_configs(root), (
             f"pyproject.toml declares version {declared_version!r} but no bumpversion config "
-            f"was found in any file bump-my-version searches ({', '.join(_DISCOVERABLE_CONFIGS)}). "
+            f"was found in any file bump-my-version searches ({', '.join(DISCOVERABLE_CONFIGS)}). "
             f"It will silently fall back to `git describe`, so a release can be cut at a version "
-            f"that already exists. Add a [tool.bumpversion] table to pyproject.toml.{hint}"
+            f"that already exists. Add a [tool.bumpversion] table to pyproject.toml."
+            f"{legacy_config_hint(root)}"
         )
 
     def test_pyproject_is_the_config_that_wins(self, root: Path, declared_version: str) -> None:
@@ -288,9 +262,7 @@ class TestBumpversionConfigIsDiscoverable:
         takes ``[project].version`` out of the picture, so the two version numbers can
         then drift apart unnoticed. A Python project keeps its version in one place.
         """
-        shadowing = [
-            name for name in _DISCOVERABLE_CONFIGS if name != "pyproject.toml" and _has_bumpversion_section(root / name)
-        ]
+        shadowing = shadowing_configs(root, "pyproject.toml")
         assert not shadowing, (
             f"{shadowing} is searched before pyproject.toml and would shadow its "
             f"[tool.bumpversion] table, detaching the bump from [project].version "
@@ -315,12 +287,7 @@ class TestBumpversionConfigIsDiscoverable:
         section = pyproject.get("tool", {}).get("bumpversion")
         if not isinstance(section, dict):
             pytest.skip("no [tool.bumpversion] table — reported by test_a_discoverable_config_exists")
-        for key in ("commit", "tag"):
-            assert section.get(key, False) is False, (
-                f"[tool.bumpversion].{key} must be false: the release flow commits and tags "
-                f"itself so the changelog lands in the bump commit, and a bare "
-                f"`bump-my-version bump` would otherwise add a second commit and a duplicate tag"
-            )
+        assert_release_flow_owns_the_commit_and_the_tag(section)
 
 
 class TestGitTagVersion:

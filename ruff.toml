@@ -146,6 +146,17 @@ line-ending = "auto"
     "S607",  # partial executable paths (git, bash) are intentional
     "ARG",   # pytest fixtures are requested by name for their side effects, not always read
 ]
+# The assertions the checks share (#14). It sits beside the package rather than inside
+# `checks/`, because a module under `checks/` named `_bumpversion.py` would still be a
+# module a consumer could name on a `--pyargs` command line by mistake, and one holding a
+# `Test`-prefixed base class would be collected twice. So it needs the same allowances as
+# the checks whose assertions it holds, granted separately.
+"src/pytest_rhiza/_bumpversion.py" = [
+    "ANN",     # tests prioritize readability and fixtures over strict annotation coverage
+    "S101",    # assert is the test idiom
+    "ARG",     # pytest fixtures are requested by name for their side effects, not always read
+    "RUF012",  # the contract's parameters are bare class attributes, not ClassVar
+]
 # Project test suite only — allowances the synced .rhiza/tests should not inherit
 "tests/**/*.py" = [
     "RUF002",  # docstrings quote prose with typographic unicode (e.g. en dash)
