@@ -30,6 +30,20 @@ Examples:
 """
 '''
 
+# Imports its sibling, so that by the time the walk reaches `beta` it is already in
+# sys.modules — resolved from the folder under test, which is the case eviction must not
+# disturb. Discovery is sorted, so `alpha` reliably comes first.
+IMPORTS_A_SIBLING = '''
+"""A package that imports its sibling.
+
+Examples:
+    >>> 1
+    1
+"""
+
+import beta  # noqa: F401
+'''
+
 PASSING_MODULE = '''
 """A demonstration module.
 
@@ -213,6 +227,48 @@ class TestFailureModes:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Could not import" in result.stdout, result.stdout
+
+    def test_a_package_shadowed_by_an_installed_distribution_is_still_measured(
+        self, subject: Callable[..., Subject]
+    ) -> None:
+        """The folder under test wins over a same-named package already imported.
+
+        ``dotenv`` is the sharpest case available: the check module imports it itself, so
+        it is guaranteed to be in ``sys.modules`` before the walk starts. Without the fix
+        ``import_module("dotenv")`` returns the *installed* python-dotenv and the subject's
+        own package is never opened — the gate reports a pass having measured somebody
+        else's code, which is the failure mode that hid this for three releases of
+        pytest-rhiza's own ``_bumpversion`` module.
+        """
+        repo = subject({"src/dotenv/__init__.py": FAILING_MODULE}, tag="v1.2.3")
+
+        result = repo.run("test_docstrings")
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "Doctest summary" in result.stdout, result.stdout
+
+    def test_a_package_already_imported_from_the_folder_is_left_alone(self, subject: Callable[..., Subject]) -> None:
+        """Eviction must not fire when the cached package is *already* the right one.
+
+        ``alpha`` imports ``beta``, so by the time the walk reaches ``beta`` it is in
+        ``sys.modules`` — resolved from the folder under test, which is the case eviction
+        must leave alone. Dropping and re-importing it there would be pointless work at
+        best, and at worst would re-run import-time code that ``alpha`` is holding a
+        reference to. Package discovery is sorted, which is what makes ``alpha`` reliably
+        come first.
+        """
+        repo = subject(
+            {
+                "src/alpha/__init__.py": IMPORTS_A_SIBLING,
+                "src/beta/__init__.py": PASSING_MODULE,
+            },
+            tag="v1.2.3",
+        )
+
+        result = repo.run("test_docstrings")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 passed" in result.stdout, result.stdout
 
     def test_a_source_folder_with_no_examples_at_all_skips(self, subject: Callable[..., Subject]) -> None:
         """Docstrings without examples are not a failure — there is simply nothing to run."""
