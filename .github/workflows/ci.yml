@@ -64,8 +64,16 @@ jobs:
       # The suite shells out to git (the `latest_tag` fixture, and the throwaway repos
       # the tests build), and it is `git` on PATH that is used — `shutil.which` resolves
       # it, so the Windows runner's git works the same as the others.
+      #
+      # The coverage flags mirror `make test` and `rhiza-task test`, so the threshold is
+      # the same number in all three places. Measuring it at all depends on
+      # `[tool.coverage.run] patch = ["subprocess"]` in pyproject.toml: the checks are
+      # exercised by inner `pytest --pyargs` runs in subprocesses, which a parent-only
+      # coverage run does not see.
       - name: Run tests
-        run: uv run --group test --python ${{ matrix.python-version }} pytest -ra
+        run: >-
+          uv run --group test --python ${{ matrix.python-version }}
+          pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
 
   audit:
     name: pip-audit (dependency CVEs)
