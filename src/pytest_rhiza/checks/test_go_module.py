@@ -26,10 +26,11 @@ Validates that:
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
+
+from pytest_rhiza._bumpversion import SyncedBumpversionConfig
 
 # The one place a Go module's version exists in the source tree.
 _VERSION_GO = Path("internal") / "version" / "version.go"
@@ -43,32 +44,6 @@ _GO_DIRECTIVE_RE = re.compile(r"^go\s+(\d+)\.(\d+)", re.MULTILINE)
 # `go mod tidy -diff`, which `make deps` is, landed in 1.23. Below that the gate fails
 # with an unrecognised flag rather than with a dependency problem.
 _MIN_GO = (1, 23)
-
-# The only filenames bump-my-version auto-discovers (#1453). A Go module owns none of
-# them — it has no manifest at all — which is why go-core ships the first one.
-_DISCOVERABLE_CONFIGS = (".bumpversion.toml", ".bumpversion.cfg", "setup.cfg", "pyproject.toml")
-
-
-def _has_bumpversion_section(path: Path) -> bool:
-    """Report whether a config file carries a bumpversion section at all.
-
-    Args:
-        path: Candidate config file; a missing or malformed file counts as absent.
-
-    Returns:
-        True when the file declares ``[tool.bumpversion]`` (TOML) or ``[bumpversion]``
-        (INI).
-    """
-    if not path.is_file():
-        return False
-    if path.suffix == ".cfg":
-        return "[bumpversion]" in path.read_text(encoding="utf-8")
-    try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except tomllib.TOMLDecodeError:
-        return False
-    return isinstance(data.get("tool", {}).get("bumpversion"), dict)
 
 
 @pytest.fixture(scope="module")
@@ -99,16 +74,6 @@ def declared_version(root: Path) -> str:
             f"release fails on it rather than warning."
         )
     return match.group(1)
-
-
-@pytest.fixture(scope="module")
-def bumpversion(root: Path) -> dict:
-    """Return the [tool.bumpversion] table from .bumpversion.toml."""
-    path = root / ".bumpversion.toml"
-    if not path.is_file():
-        pytest.skip(".bumpversion.toml not found — reported by TestBumpversionConfig")
-    with path.open("rb") as handle:
-        return tomllib.load(handle).get("tool", {}).get("bumpversion", {})
 
 
 class TestGoMod:
@@ -164,7 +129,7 @@ class TestVersionConstant:
         )
 
 
-class TestBumpversionConfig:
+class TestBumpversionConfig(SyncedBumpversionConfig):
     """The release flow must find a version config, not silently invent one (#1453).
 
     bump-my-version searches four filenames and stops. Finding none it does **not**
@@ -172,93 +137,22 @@ class TestBumpversionConfig:
     current version. For Go that fallback is especially easy to miss, because reading
     the version from the tag is *also* what the shipped config does deliberately; the
     difference is that the real config knows where to write the value back.
+
+    The assertions themselves are :class:`~pytest_rhiza._bumpversion.SyncedBumpversionConfig`,
+    shared with the Rust layer (#14). What is Go-specific is declared below. Note
+    ``search_is_regex`` is False: ``const Version`` is a literal that appears once as a
+    declaration, so no escaping is needed to anchor to it — where Rust has to distinguish
+    a crate version from a same-numbered dependency pin, Go only has to avoid prose.
     """
 
-    def test_a_discoverable_config_exists(self, root: Path) -> None:
-        """A bumpversion section must live in a file bump-my-version actually reads."""
-        found = [name for name in _DISCOVERABLE_CONFIGS if _has_bumpversion_section(root / name)]
-        hint = ""
-        if (root / ".rhiza" / ".cfg.toml").is_file():
-            hint = (
-                " A leftover .rhiza/.cfg.toml is present: that path is never auto-discovered "
-                "(it predates the fix for issue #1453) and can be deleted."
-            )
-        assert found, (
-            f"No bumpversion config was found in any file bump-my-version searches "
-            f"({', '.join(_DISCOVERABLE_CONFIGS)}). It will silently fall back to "
-            f"`git describe` and write the new version nowhere. Restore the .bumpversion.toml "
-            f"the go-core bundle ships.{hint}"
-        )
-
-    def test_no_other_config_shadows_the_go_config(self, root: Path) -> None:
-        """No second bumpversion section may compete with .bumpversion.toml.
-
-        ``.bumpversion.toml`` is searched first and wins, so a table declared in a
-        pyproject.toml the repo carries for tooling is inert — and being inert, it
-        drifts out of step unnoticed.
-        """
-        if not _has_bumpversion_section(root / ".bumpversion.toml"):
-            pytest.skip("no .bumpversion.toml — reported by test_a_discoverable_config_exists")
-        duplicates = [
-            name
-            for name in _DISCOVERABLE_CONFIGS
-            if name != ".bumpversion.toml" and _has_bumpversion_section(root / name)
-        ]
-        assert not duplicates, (
-            f"{duplicates} also declares a bumpversion section. .bumpversion.toml is searched "
-            f"first and wins, so the other config never runs."
-        )
-
-    def test_the_config_does_not_pin_a_current_version(self, bumpversion: dict) -> None:
-        """``current_version`` must stay absent from a synced config.
-
-        The file is owned by rhiza, so a value only the consuming repo can maintain
-        would be reset by the next ``/rhiza:update``. For a Go module omitting it is
-        not even a compromise: the module version *is* the newest tag, which is exactly
-        what bump-my-version then reads.
-        """
-        assert "current_version" not in bumpversion, (
-            "[tool.bumpversion].current_version is set in a file rhiza syncs; the next "
-            "/rhiza:update would overwrite it. Omit the key — for Go the tag is the version."
-        )
-
-    def test_the_config_targets_the_version_constant(self, bumpversion: dict) -> None:
-        """A ``[[files]]`` entry must point at internal/version/version.go.
-
-        Without it the bump still "succeeds" while writing the new version nowhere at
-        all — Go has no manifest to fall back on, so the constant is the whole story.
-        """
-        targets = [entry.get("filename") for entry in bumpversion.get("files", [])]
-        assert _VERSION_GO.as_posix() in targets, (
-            f"no [[tool.bumpversion.files]] entry targets {_VERSION_GO.as_posix()} (found "
-            f"{targets}); a bump would write the new version nowhere"
-        )
-
-    def test_the_version_search_is_anchored_to_the_declaration(self, bumpversion: dict) -> None:
-        """The search must include `const Version`, not just a bare version string.
-
-        ``search`` is applied to every occurrence in the file, and version.go's own doc
-        comment explains the release flow — so a bare number would also rewrite a
-        version mentioned in prose or in an example.
-        """
-        entries = [entry for entry in bumpversion.get("files", []) if entry.get("filename") == _VERSION_GO.as_posix()]
-        if not entries:
-            pytest.skip("no version.go entry — reported by test_the_config_targets_the_version_constant")
-        for entry in entries:
-            search = str(entry.get("search", ""))
-            assert "const Version" in search, (
-                f"the version.go entry's search {search!r} is not anchored to the declaration; "
-                f"it would also rewrite a version appearing in a comment or an example"
-            )
-
-    def test_the_release_flow_owns_the_commit_and_the_tag(self, bumpversion: dict) -> None:
-        """``/rhiza:release`` folds the changelog into the bump commit and tags it itself."""
-        for key in ("commit", "tag"):
-            assert bumpversion.get(key, False) is False, (
-                f"[tool.bumpversion].{key} must be false: the release flow commits and tags "
-                f"itself so the changelog lands in the bump commit, and a bare "
-                f"`bump-my-version bump` would otherwise add a second commit and a duplicate tag"
-            )
+    version_file = _VERSION_GO.as_posix()
+    search_anchor = "const Version"
+    bundle = "go-core"
+    missing_config_consequence = " and write the new version nowhere"
+    untargeted_consequence = "a bump would write the new version nowhere"
+    unanchored_complaint = (
+        "is not anchored to the declaration; it would also rewrite a version appearing in a comment or an example"
+    )
 
 
 class TestGitTagVersion:
