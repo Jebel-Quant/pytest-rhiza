@@ -74,40 +74,60 @@ resolved the root by counting directories up from `__file__` — sound while the
 Step 3 rather than `config.rootpath` on purpose: with no config file, pytest derives its
 rootdir from the arguments, and under `--pyargs` those are paths inside site-packages.
 
-## The make wiring this expects
+## How a consumer selects and pins the checks
 
-Selection stays exactly where the template already has it — with the bundle that owns the
-assertion, resolved at sync time — because each bundle's make fragment names its own check
-modules. No runtime manifest sniffing decides what applies, so a misconfigured repo still
-goes red instead of quietly skipping.
+Selection is still resolved by **which layers a project has**, not by sniffing its
+manifest at runtime — so a misconfigured repo goes red instead of quietly skipping a
+check. What changed at rhiza v1.4 is where that resolution lives.
 
-`core`'s `quality.mk`:
+Until v1.3 each bundle shipped a make fragment and appended to a `RHIZA_CHECKS`
+accumulator (`core`'s `quality.mk` seeded the two language-neutral checks; `python-core`,
+`rust-core`, `go-core` and `tests` each added `+=` a line). That synced make layer is
+gone — no `.rhiza/rhiza.mk`, no `.rhiza/make.d/`, no fragments. A repo generates its front
+door once:
 
-```make
-RHIZA_CHECKS ?= pytest_rhiza.checks.test_readme pytest_rhiza.checks.test_release_tags
-
-rhiza-test: install ## run the rhiza repository checks
-	@${UV_BIN} run --with 'pytest-rhiza==<version>' pytest --pyargs ${RHIZA_CHECKS}
+```bash
+uvx rhiza-task shim > Makefile
 ```
 
-`<version>` is a placeholder, not a value to copy. The sync generates the pin from the
-template release — see [Version pinning](#two-things-still-to-decide) — so the number that
-lands in a consumer's `quality.mk` is never written by hand here. It is also spelled this
-way because a literal cannot survive: nothing bumps this file (there is no
-`[[tool.bumpversion.files]]` entry for it) and nothing checks it either — a ```` ```make ````
-fence is reported by the docs check as *skipped — make fences are not checkable*, and the
-README's `bash` fences are only parsed by `bash -n`, never resolved against reality. The
-pin here read `0.1.0` for three releases for exactly that reason. `tests/test_readme_pin.py`
-is now the thing that notices.
+`make rhiza-test` still works and is still what a stranger types, but the Makefile no
+longer *contains* the recipe: a `%:` catch-all forwards unmatched targets to the pinned
+CLI, and the check list is derived from the declared layer set.
 
-`python-core`'s `python.mk` appends its own, and `rust-core` / `go-core` / `tests` do the
-same with theirs:
+Both settings live in `[tool.rhiza-task]` in the consumer's `pyproject.toml`:
 
-```make
-RHIZA_CHECKS += pytest_rhiza.checks.test_pyproject pytest_rhiza.checks.test_docstrings
+```toml
+[tool.rhiza-task]
+# Which layers this project has. Declared rather than detected, for the same reason the
+# accumulator was resolved at sync time: inference would let a misconfigured checkout
+# quietly get a different check set instead of failing.
+layers = ["python"]
+
+# The pin. One number, so the checks and the template move together rather than drifting
+# on two version axes.
+pytest-rhiza = "pytest-rhiza @ git+https://github.com/Jebel-Quant/pytest-rhiza@<version>"
 ```
 
-That is one `+=` line per bundle, replacing one synced file per bundle.
+`<version>` is a placeholder, not a value to copy — and this README deliberately writes no
+literal there. Nothing in this repository bumps a number written in `README.md` (there is
+no `[[tool.bumpversion.files]]` entry for it) and until recently nothing read it either, so
+the pin sat at `0.1.0` for three releases (#17). `tests/test_readme_pin.py` is what notices
+now.
+
+### Doctest scope is the one setting the CLI does not pass
+
+`checks/test_docstrings.py` takes its folders from the `RHIZA_DOCTEST_FOLDERS`
+environment variable, falling back to `src`. That variable is **not** set by
+`rhiza-task` — a consumer whose Python lives outside its source root exports it around
+the gate, which is what rhiza itself does:
+
+```bash +RHIZA_SKIP
+RHIZA_DOCTEST_FOLDERS="$(uvx rhiza-task print source_folder)" uvx rhiza-task rhiza-test
+```
+
+Without it the check resolves `src` alone, and a project keeping its Python elsewhere has
+its examples silently unchecked — rhiza's own repo being the extreme case, with no `src/`
+at all.
 
 ## Two things still to decide
 

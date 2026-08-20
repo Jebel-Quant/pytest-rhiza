@@ -6,10 +6,17 @@ to ``.rhiza/tests/test_docstrings.py``. It now arrives installed, and is collect
 
 Automatically discovers all packages and runs doctests for each.
 
-**Scope.** The folders searched come from ``RHIZA_DOCTEST_FOLDERS``, which ``quality.mk``
-sets from python-core's ``DOCSTRING_FOLDERS`` accumulator — the same list ``make
-docs-coverage`` uses. With the variable unset (running pytest by hand, say) it falls back
-to ``SOURCE_FOLDER`` from ``.rhiza/.env``, defaulting to ``src``.
+**Scope.** The folders searched come from ``RHIZA_DOCTEST_FOLDERS``. Nothing sets it for
+you: ``rhiza-task`` deliberately does not export it, so a consumer whose Python lives
+outside its source root wraps the gate to pass its own ``source_folder``. With the
+variable unset — running pytest by hand, or a project whose code *is* under ``src`` — it
+falls back to ``SOURCE_FOLDER`` from ``.rhiza/.env``, then to ``src``.
+
+That ``.rhiza/.env`` rung is now a compatibility path rather than the documented home:
+rhiza retired the file at v1.4 in favour of ``[tool.rhiza-task] source-folder``. It is kept
+because a repo that has not migrated still has the file, and reading it costs nothing.
+Up to v1.3 the variable was exported by ``quality.mk`` from python-core's
+``DOCSTRING_FOLDERS`` accumulator; that make layer no longer exists.
 
 That indirection exists because this gate used to resolve ``src`` and nothing else, so a
 project keeping Python outside its source root had its docstring examples silently
@@ -40,7 +47,8 @@ from dotenv import dotenv_values
 # Read .rhiza/.env at collection time (no environment side-effects).
 RHIZA_ENV_PATH = Path(".rhiza/.env")
 
-# Set by `make rhiza-test` from DOCSTRING_FOLDERS; whitespace-separated.
+# Whitespace-separated. Exported by whatever wraps the gate — `rhiza-task` does not set
+# it, so an unset variable means "fall back", not "misconfigured".
 DOCTEST_FOLDERS_ENV = "RHIZA_DOCTEST_FOLDERS"
 
 

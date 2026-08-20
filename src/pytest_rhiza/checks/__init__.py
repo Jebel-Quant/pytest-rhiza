@@ -8,9 +8,14 @@ tests. So the checks are named explicitly on the command line:
     pytest --pyargs pytest_rhiza.checks.test_readme pytest_rhiza.checks.test_pyproject
 
 **One module per file the template used to sync**, names unchanged. That is deliberate:
-selection stays where it already is — with the make fragment the owning bundle ships, one
-``RHIZA_CHECKS +=`` line each — so a Python project never names the Cargo checks and
-nothing has to sniff for manifests at runtime to decide what applies.
+selection stays a property of the project's *layer set*, so a Python project never names
+the Cargo checks and nothing has to sniff for manifests at runtime to decide what applies.
+
+Where that resolution lives changed at rhiza v1.4. Up to v1.3 each bundle shipped a make
+fragment appending to a ``RHIZA_CHECKS`` accumulator; the synced make layer is gone, and
+the list is now derived from ``[tool.rhiza-task] layers`` in the consumer's
+``pyproject.toml``. The ownership model is unchanged — the column below still says which
+bundle owns each assertion.
 
 | module | bundle that names it | replaces |
 | --- | --- | --- |
