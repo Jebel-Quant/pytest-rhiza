@@ -19,8 +19,13 @@ lint: ## Run all pre-commit hooks over every file
 install-hooks: ## Install the git pre-commit hook
 	$(PREK) install
 
-test: ## Run the test suite
-	uv run --group test pytest -ra
+# Same flags CI runs, deliberately: a coverage threshold that only exists in one of the
+# two is a threshold nobody notices crossing. `--cov=src` matches what `rhiza-task test`
+# passes, and the 90 is its default `coverage_fail_under`. Subprocess measurement is
+# configured in pyproject.toml — without it this number is meaningless, because the
+# checks only ever execute in child processes.
+test: ## Run the test suite with coverage
+	uv run --group test pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
 
 clean: ## Remove build artefacts and caches
 	rm -rf dist build .pytest_cache .ruff_cache .coverage htmlcov *.egg-info src/*.egg-info

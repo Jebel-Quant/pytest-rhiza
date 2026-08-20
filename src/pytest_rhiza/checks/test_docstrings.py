@@ -170,9 +170,17 @@ def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.
             logger.debug("Doctests passed for %s (%d test(s))", module.__name__, results.attempted)
 
     for src_path in folders:
+        # A configured folder may *be* a package rather than contain them: a flat-layout
+        # project names its package directly, so `SOURCE_FOLDER=mypackage`. Its modules
+        # are then importable relative to the folder's parent, and resolving them against
+        # the folder itself derives an empty module name for `__init__.py` — which is a
+        # ValueError from importlib rather than the ImportError the walk expects, so the
+        # whole gate crashed instead of reporting anything.
+        import_root = src_path.parent if (src_path / "__init__.py").exists() else src_path
+
         # Add the folder to sys.path with automatic cleanup
-        monkeypatch.syspath_prepend(str(src_path))
-        logger.debug("Prepended to sys.path: %s", src_path)
+        monkeypatch.syspath_prepend(str(import_root))
+        logger.debug("Prepended to sys.path: %s", import_root)
 
         # Find all packages in the folder (supports namespace packages)
         for package_dir in _find_packages(src_path):
@@ -181,7 +189,7 @@ def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.
                 package_name = package_dir.name
                 logger.info("Discovered package: %s", package_name)
                 try:
-                    modules = list(_iter_modules_from_path(logger, package_dir, src_path))
+                    modules = list(_iter_modules_from_path(logger, package_dir, import_root))
                     logger.debug("%d module(s) found in package %s", len(modules), package_name)
 
                     for module in modules:

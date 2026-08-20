@@ -64,5 +64,35 @@ jobs:
       # The suite shells out to git (the `latest_tag` fixture, and the throwaway repos
       # the tests build), and it is `git` on PATH that is used — `shutil.which` resolves
       # it, so the Windows runner's git works the same as the others.
+      #
+      # The coverage flags mirror `make test` and `rhiza-task test`, so the threshold is
+      # the same number in all three places. Measuring it at all depends on
+      # `[tool.coverage.run] patch = ["subprocess"]` in pyproject.toml: the checks are
+      # exercised by inner `pytest --pyargs` runs in subprocesses, which a parent-only
+      # coverage run does not see.
       - name: Run tests
-        run: uv run --group test --python ${{ matrix.python-version }} pytest -ra
+        run: >-
+          uv run --group test --python ${{ matrix.python-version }}
+          pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
+
+  audit:
+    name: pip-audit (dependency CVEs)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Exact version, not a floating major: astral-sh/setup-uv publishes no `v8`,
+      # `v9` or `v10` alias tag, so `@v10` fails to resolve at job start.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # The `security` gate rhiza_ci.yml runs is bandit only — it scans *our* source for
+      # insecure patterns and never looks at what we depend on. This is the other half:
+      # pip-audit resolves the locked environment and checks it against the advisory
+      # database. It matters more here than in most projects, because pytest-rhiza is a
+      # runtime dependency of every rhiza-managed repo, so a vulnerable transitive
+      # dependency propagates into every consumer's test environment.
+      - name: Audit dependencies
+        run: uvx pip-audit

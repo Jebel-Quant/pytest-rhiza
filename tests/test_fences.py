@@ -102,6 +102,7 @@ class TestBashUsable:
         bash_usable.cache_clear()
 
         def _silent_failure(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            """Stand in for a bash that exits non-zero saying nothing at all."""
             return subprocess.CompletedProcess(args=["bash", "-n"], returncode=1, stdout="", stderr="")
 
         monkeypatch.setattr(_fences.subprocess, "run", _silent_failure)
