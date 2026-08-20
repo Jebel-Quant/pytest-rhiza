@@ -239,25 +239,28 @@ def _iter_package_modules(logger, monkeypatch, src_path: Path, import_root: Path
         import_root: The directory prepended to ``sys.path`` for that folder.
 
     Yields:
-        Each imported module. A package that cannot be walked is warned about and
-        skipped, for the same reason a module is: not measuring something is a different
-        statement from finding it wrong.
+        Each imported module. A module that cannot be imported is warned about and skipped
+        by :func:`_iter_modules_from_path`, one module at a time — not measuring something
+        is a different statement from finding it wrong.
     """
     # No `is_dir() and (package_dir / "__init__.py").exists()` guard: the inline version
     # had one, and inverting it to a `continue` made visible that it can never fire.
     # `_find_packages` globs `__init__.py` and yields each match's parent, so both halves
     # are true by construction — the guard was an uncoverable branch asserting the
     # postcondition of the generator two lines above it.
+    #
+    # And no `except ImportError` around the `list()` either, for the same reason (#45).
+    # `_iter_modules_from_path` catches ImportError around its own `import_module` call and
+    # continues, so no ImportError can escape the generator for a handler here to see —
+    # the walk raising one would mean that handler had stopped working. It was 4 of the 6
+    # uncovered lines in the package and could not be tested, because there is no repo
+    # state that reaches it. Per-module is also the better granularity: one unimportable
+    # module no longer costs the measurement of its siblings.
     for package_dir in _find_packages(src_path):
         package_name = package_dir.name
         logger.info("Discovered package: %s", package_name)
         _evict_shadowing_package(monkeypatch, logger, import_root, package_dir)
-        try:
-            modules = list(_iter_modules_from_path(logger, package_dir, import_root))
-        except ImportError as e:
-            warnings.warn(f"Could not import package {package_name}: {e}", stacklevel=2)
-            logger.warning("Could not import package %s: %s", package_name, e)
-            continue
+        modules = list(_iter_modules_from_path(logger, package_dir, import_root))
         logger.debug("%d module(s) found in package %s", len(modules), package_name)
         yield from modules
 

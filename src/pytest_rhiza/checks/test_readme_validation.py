@@ -18,12 +18,50 @@ independently and a shared helper would need a third home both bundles ship; one
 distribution is that home.
 """
 
-import subprocess  # nosec B404
+import difflib
 import sys
 
 import pytest
 
 from pytest_rhiza._fences import CODE_BLOCK, RESULT, SKIP_FLAG, should_skip
+from pytest_rhiza._process import execute_timeout, run
+
+
+def _mismatch(code_blocks, result_blocks, expected, actual):
+    """Explain an output mismatch, as the message for the assertion that found it (#46).
+
+    The assertion this serves used to carry no message at all, which mattered more here
+    than it looks: every ``python`` fence is executed as *one* script and diffed against
+    *all* the ``result`` fences merged, so pytest's own output was two opaque blobs with no
+    indication of which fence had drifted. This says how the merge works, so the reader can
+    map a diff line back to a fence, and shows the difference as a diff rather than as two
+    values to compare by eye.
+
+    Args:
+        code_blocks: The non-skipped python fence bodies, in document order.
+        result_blocks: The ``result`` fence bodies, in document order.
+        expected: The merged documented output.
+        actual: What the merged script actually printed.
+
+    Returns:
+        The failure message.
+    """
+    diff = "\n".join(
+        difflib.unified_diff(
+            expected.strip().splitlines(),
+            actual.strip().splitlines(),
+            fromfile="documented (```result``` fences)",
+            tofile="actual (stdout)",
+            lineterm="",
+        )
+    )
+    return (
+        f"README output does not match its documented result.\n\n"
+        f"{len(code_blocks)} python fence(s) are concatenated into one script and its stdout "
+        f"compared against {len(result_blocks)} ```result``` fence(s) concatenated in document "
+        f"order — so line N of the diff below is line N of that merged text, and counting "
+        f"``result`` fences from the top of the README names the one to fix.\n\n{diff}"
+    )
 
 
 def test_readme_runs(logger, root):
@@ -53,8 +91,22 @@ def test_readme_runs(logger, root):
 
     # Trust boundary: we execute Python snippets sourced from README.md in this repo.
     # The README is part of the trusted repository content and reviewed in PRs.
+    #
+    # Bounded, because this is the one call in the package that runs code somebody wrote
+    # rather than inspecting something (#44). An example that waits on `input()` or blocks
+    # on a network call used to hang the gate instead of failing it — and a hung CI job
+    # reports nothing while spending the whole runner budget.
     logger.debug("Executing README code via %s -c ...", sys.executable)
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=root)  # nosec
+    result = run(
+        [sys.executable, "-c", code],
+        cwd=root,
+        timeout=execute_timeout(),
+        on_timeout=(
+            f"the README's python fences did not finish. They are executed as one script, so "
+            f"one example waiting for input, blocking on the network, or looping forever stops "
+            f"all of them. Make it terminate, or mark that fence ```python {SKIP_FLAG}```."
+        ),
+    )
 
     stdout = result.stdout
     logger.debug("Execution finished with return code %d", result.returncode)
@@ -64,7 +116,7 @@ def test_readme_runs(logger, root):
 
     assert result.returncode == 0, f"README code exited with {result.returncode}. Stderr:\n{result.stderr}"
     logger.info("README code executed successfully; comparing output to expected result")
-    assert stdout.strip() == expected.strip()
+    assert stdout.strip() == expected.strip(), _mismatch(code_blocks, result_blocks, expected, stdout)
     logger.info("README code output matches expected result")
 
 

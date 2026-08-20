@@ -22,6 +22,8 @@ import functools
 import re
 import subprocess  # nosec B404
 
+from pytest_rhiza._process import inspect_timeout
+
 # Bash code blocks — captures optional flags (e.g. "+RHIZA_SKIP") and the code body.
 BASH_BLOCK = re.compile(r"```bash([^\n]*)\n(.*?)```", re.DOTALL)
 
@@ -185,8 +187,14 @@ def bash_usable() -> bool:
             input=_PROBE,
             capture_output=True,
             text=True,
+            timeout=inspect_timeout(),
         )
     except OSError:
         # bash is absent entirely, or not executable.
+        return False
+    except subprocess.TimeoutExpired:
+        # A `bash` that cannot parse `:` within the budget is not a usable bash. Reported
+        # the same way as an absent one rather than as a failure: this function's whole
+        # job is to answer "can this platform parse fences at all", and "it hung" is a no.
         return False
     return result.returncode == 0

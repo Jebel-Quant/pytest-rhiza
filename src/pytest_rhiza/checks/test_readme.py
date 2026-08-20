@@ -22,12 +22,12 @@ distribution is that home.
 
 from __future__ import annotations
 
-import subprocess  # nosec B404
 from pathlib import Path
 
 import pytest
 
 from pytest_rhiza._fences import BASH, bash_usable, classify_bash_blocks
+from pytest_rhiza._process import run
 
 
 def _assert_parses(index: int, code: str) -> None:
@@ -40,11 +40,14 @@ def _assert_parses(index: int, code: str) -> None:
     Raises:
         Failed: via :func:`pytest.fail`, when bash rejects the snippet.
     """
-    result = subprocess.run(  # nosec B603 B607 - `bash -n` parses without executing
+    result = run(
         [BASH, "-n"],
-        input=code,
-        capture_output=True,
-        text=True,
+        stdin=code,
+        on_timeout=(
+            f"`bash -n` never finished parsing block {index}. It parses without executing, "
+            f"so this is the shell itself wedging rather than the fence running — see "
+            f"`pytest_rhiza._fences.bash_usable` for the platform this tends to be."
+        ),
     )
     if result.returncode == 0:
         return
