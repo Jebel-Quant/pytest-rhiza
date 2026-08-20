@@ -87,8 +87,18 @@ goes red instead of quietly skipping.
 RHIZA_CHECKS ?= pytest_rhiza.checks.test_readme pytest_rhiza.checks.test_release_tags
 
 rhiza-test: install ## run the rhiza repository checks
-	@${UV_BIN} run --with 'pytest-rhiza==0.1.0' pytest --pyargs ${RHIZA_CHECKS}
+	@${UV_BIN} run --with 'pytest-rhiza==<version>' pytest --pyargs ${RHIZA_CHECKS}
 ```
+
+`<version>` is a placeholder, not a value to copy. The sync generates the pin from the
+template release — see [Version pinning](#two-things-still-to-decide) — so the number that
+lands in a consumer's `quality.mk` is never written by hand here. It is also spelled this
+way because a literal cannot survive: nothing bumps this file (there is no
+`[[tool.bumpversion.files]]` entry for it) and nothing checks it either — a ```` ```make ````
+fence is reported by the docs check as *skipped — make fences are not checkable*, and the
+README's `bash` fences are only parsed by `bash -n`, never resolved against reality. The
+pin here read `0.1.0` for three releases for exactly that reason. `tests/test_readme_pin.py`
+is now the thing that notices.
 
 `python-core`'s `python.mk` appends its own, and `rust-core` / `go-core` / `tests` do the
 same with theirs:

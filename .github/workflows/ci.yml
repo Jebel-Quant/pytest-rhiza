@@ -1,5 +1,18 @@
 name: CI
 
+# Third-party actions are SHA-pinned, with the human-readable version in the trailing
+# comment. A tag is a mutable ref — even an exact one like `v10.0.1` — so pinning to it
+# leaves the code that runs in CI changeable by its owner with no commit here. The SHA is
+# the only immutable form; the trailing comment is what keeps it reviewable, and
+# .github/dependabot.yml is what keeps the two moving together. Pinning without an
+# updater only trades a mutable ref for a stale one, so the two arrive together.
+#
+# Separately, `astral-sh/setup-uv` could not have used a floating major in any case: it
+# publishes no `v8`, `v9` or `v10` alias tag, so `@v10` does not resolve at all.
+#
+# `.github/workflows/rhiza_*.yml` are upstream files from jebel-quant/rhiza, so pinning
+# them belongs upstream and is filed as Jebel-Quant/rhiza#1577 rather than patched here.
+
 on:
   push:
     branches: [main]
@@ -20,11 +33,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Exact version, not a floating major: astral-sh/setup-uv publishes no `v8`,
-      # `v9` or `v10` alias tag, so `@v10` fails to resolve at job start.
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
@@ -48,11 +59,9 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Exact version, not a floating major: astral-sh/setup-uv publishes no `v8`,
-      # `v9` or `v10` alias tag, so `@v10` fails to resolve at job start.
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
@@ -80,11 +89,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Exact version, not a floating major: astral-sh/setup-uv publishes no `v8`,
-      # `v9` or `v10` alias tag, so `@v10` fails to resolve at job start.
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
