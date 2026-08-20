@@ -1,0 +1,85 @@
+# This file is part of the jebel-quant/rhiza repository
+# (https://github.com/jebel-quant/rhiza).
+#
+# Configuration: Dependabot
+#
+# Purpose: Automate dependency updates for Python packages, GitHub Actions, and Docker images.
+#
+# Documentation: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Adopted verbatim from the template, like the rhiza_*.yml workflow stubs. It was never
+# synced here because this repository carries no .rhiza/ pointer, which is why the
+# github-actions ecosystem below had nothing keeping ci.yml current — and why the SHA
+# pins added alongside it would otherwise have gone stale unnoticed.
+
+version: 2
+updates:
+  # Python dependencies using uv
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "Asia/Dubai"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "Asia/Dubai"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"
+
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # Docker
+  #- package-ecosystem: "docker"
+  #  directory: "/docker"
+  #  schedule:
+  #    interval: "weekly"
+  #    day: "tuesday"
+  #    time: "09:00"
+  #    timezone: "Asia/Dubai"
+  #  open-pull-requests-limit: 10
+  #  labels:
+  #    - "dependencies"
+  #    - "docker"
+  #  commit-message:
+  #    prefix: "chore(deps)"
+  #    include: "scope"
