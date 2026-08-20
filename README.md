@@ -152,18 +152,35 @@ Without it the check resolves `src` alone, and a project keeping its Python else
 its examples silently unchecked — rhiza's own repo being the extreme case, with no `src/`
 at all.
 
-## Two things still to decide
+## Two things that were decided
 
-**Version pinning.** Today the checks and the template move as one — `template.lock` pins
-a ref and the files come with it. A separate distribution adds a second version axis. The
-recipe above pins an exact version so there is still one number to reason about, but the
-sync has to *generate* that pin from the template release. The alternative is aligning
-this package's `major.minor` with template releases and pinning `~=`.
+Both of these were open questions while the split was being designed. They are settled
+now, and the second went the opposite way to what was expected — which is the more useful
+half to record.
 
-**Removing the old folder.** A consumer on the current template has `.rhiza/tests/` on
-disk. The sync ceasing to deliver it does not delete it, and a leftover copy would run
-twice as long as `pythonpath` still finds it. The migration PR needs an explicit removal
-step.
+**Version pinning: one number, and no literal in this file.** The worry was that a
+separate distribution adds a second version axis to reason about. It does not, because the
+pin travels in the template: it is one setting a consumer's sync writes, so a repo on a
+given template release runs that release's assertions, exactly as file-copy delivery gave
+for free. The alternative considered — aligning this package's `major.minor` with template
+releases and pinning `~=` — was not taken.
+
+What *did* need deciding was where the number is written, and the answer is nowhere in
+this README. Nothing here bumps it and, until #17, nothing read it either, so the
+documented pin sat at `0.1.0` for three releases. The example uses a placeholder, and
+`tests/test_readme_pin.py` is what keeps a literal from creeping back.
+
+**Removing the old folder: not required, because a leftover is inert.** The concern was
+that a consumer keeps `.rhiza/tests/` on disk (a sync ceasing to deliver a file does not
+delete it) and that the copy would then run twice, so a migration would need an explicit
+removal step.
+
+That was wrong, and for a reason worth knowing: the gate names **modules**, not paths. It
+resolves `pytest_rhiza.checks.*` out of site-packages, so it never looks at the folder —
+and `pythonpath = .rhiza/tests`, the one thing that used to make the folder importable, is
+itself one of the five costs above that the move removed. A leftover copy is unreachable
+rather than duplicated. `rhiza-test` warns while the folder is still present, and deleting
+it is tidying rather than a migration step.
 
 ## Development
 
