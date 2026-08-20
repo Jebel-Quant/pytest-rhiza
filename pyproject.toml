@@ -49,6 +49,20 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_rhiza"]
 
+# deptry compares *declared* dependencies against *imported* ones, which mis-reads two of
+# the four runtime deps. Both entries below are mappings, not suppressions of a real gap.
+[tool.deptry.package_module_name_map]
+# The distribution is `python-dotenv`; the module it installs is `dotenv`. Without this
+# deptry infers `python_dotenv`, then reports the declared package as unused *and* the
+# import as undeclared — the same finding twice, from one wrong guess.
+python-dotenv = ["dotenv"]
+
+[tool.deptry.per_rule_ignores]
+# pytest-timeout is consumed through its own pytest11 entry point and is never imported,
+# so deptry cannot see the use. It is declared for the same reason the block above lists
+# it: a consumer installing this package must get the plugin the checks run under.
+DEP002 = ["pytest-timeout"]
+
 # bump-my-version reads [project].version natively; /rhiza:release owns the commit and
 # the tag. Asserted by this package's own checks/test_pyproject.py, run against itself.
 [tool.bumpversion]
