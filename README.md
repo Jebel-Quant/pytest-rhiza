@@ -195,9 +195,9 @@ uv run pytest
 
 ### The gates, and where they are defined
 
-**There is no Makefile, and no `.rhiza/` layer. `.github/workflows/ci.yml` is the single
-home for every gate command line** (#52). To reproduce one, copy its line out of that
-file — each job is a single command with a comment saying why its threshold is what it is.
+**There is no Makefile, and no `.rhiza/` layer. `.github/workflows/ci.yml` defines every
+gate** (#52), and each job is a single command with a comment saying why its threshold is
+what it is.
 
 | gate | what it runs |
 | --- | --- |
@@ -212,6 +212,48 @@ file — each job is a single command with a comment saying why its threshold is
 | `license` | refuses strong copyleft in the runtime closure |
 | `rhiza-test` | the checks this package ships, against this repository, with tags |
 | `ci-gate` | one required check that fails unless every job above succeeded |
+
+#### Running one by hand
+
+```bash
+# lint
+uvx prek run --all-files --show-diff-on-failure
+# typecheck
+uv run --with ty ty check src
+# docs-coverage
+uv run --with interrogate interrogate -vv --fail-under 100 --ignore-init-method --ignore-magic src tests
+# deptry
+uvx deptry src
+# security
+uvx bandit -r src -ll -q
+# audit
+uvx pip-audit
+# license
+uv run --with pip-licenses pip-licenses --allow-only "MIT;MIT License;BSD-2-Clause;BSD-3-Clause;Apache-2.0;Apache-2.0 OR BSD-2-Clause;DFSG approved"
+# test
+uv run --group test pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
+# lowest-deps
+uv sync --all-extras --all-groups --resolution lowest-direct
+uv run --all-extras --all-groups --resolution lowest-direct pytest -ra
+# rhiza-test
+uv run --group test pytest -ra -rs --pyargs pytest_rhiza.checks.test_readme pytest_rhiza.checks.test_readme_validation pytest_rhiza.checks.test_pyproject pytest_rhiza.checks.test_docstrings pytest_rhiza.checks.test_release_tags
+```
+
+**This is a copy, and `ci.yml` is still the definition.** Until #58 the block above did not
+exist, on the #52 reasoning that a second home for a command line is a second thing to keep
+correct — the same argument that removed the Makefile. What that left was a repository where
+reproducing a red job meant opening a workflow file and reading YAML, which is a real cost
+paid by every contributor, including the ones who never write CI.
+
+So the copy is allowed and **pinned**: `tests/test_readme_gates.py` asserts that every
+command above is the one its job actually runs, and that no CI gate is missing from the
+block. A threshold edited in `ci.yml` and not here fails the suite, which is what makes one
+of the two homes authoritative rather than merely first.
+
+Two deliberate gaps. `lowest-deps` rewrites `uv.lock`'s resolution in your working tree —
+run `uv sync` afterwards to get back. And `rhiza-test`'s line stops at the pytest
+invocation: CI wraps it in a `grep` guard that fails the job if any check *skips* (#34),
+which is a property of the pipeline rather than of the gate.
 
 `weekly.yml` carries the two that are too slow or noisy for every push: a fresh
 dependency resolution, and a link check over this file.
