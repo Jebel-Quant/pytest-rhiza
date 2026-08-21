@@ -254,13 +254,14 @@ The job names the five modules this project is a subject for, and deliberately n
 `test_cargo_toml` or `test_go_module`: there is no `Cargo.toml` or `go.mod` here for them
 to judge, and a check with no subject skips, which reads as a pass (#34).
 
-The five come to 34 assertions, and locally all 34 *run* — which is the part worth
-checking, because the upstream `Rhiza repository checks` job reports `32 passed, 2
-skipped`: its checkout fetches no tags, so the two assertions comparing
-`[project].version` against the newest `vX.Y.Z` have nothing to compare and skip. That is
-the one place where local is *stronger* than that job rather than weaker, and it is why
-`ci.yml` carries a `self-check` job that re-runs those two with `fetch-depth: 0` and fails
-if anything skips at all (#34).
+The five come to 34 assertions, and all 34 *run* — which is the part worth checking,
+because rhiza's own `Rhiza repository checks` job used to report `32 passed, 2
+skipped`: its checkout fetched no tags, so the two assertions comparing
+`[project].version` against the newest `vX.Y.Z` had nothing to compare and skipped. That is
+the one place where local was *stronger* than that job rather than weaker, and it is why
+the `rhiza-test` job checks out with `fetch-depth: 0` and then fails if anything skipped at
+all (#34) — fetching tags fixes today's symptom, and the no-skip guard is what stops the
+failure mode returning through some other change.
 
 ## License
 
