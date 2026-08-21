@@ -199,6 +199,7 @@ means a green pipeline:
 | `make docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
 | `make security` | bandit over `src` |
 | `make test` | the suite, with the 90% coverage gate |
+| `make rhiza-test` | the checks this package ships, against this repository |
 
 `typecheck`, `docs-coverage` and `security` take their flags from the reusable workflow
 `jebel-quant/rhiza/.github/workflows/rhiza_ci.yml`, so the recipes mirror those jobs
@@ -206,11 +207,18 @@ rather than setting a threshold of their own — see the comment above them in t
 `Makefile`.
 
 The checks run against this repository too — it is a Python project with a README, a
-`pyproject.toml` and a release config, so it is a valid subject for its own assertions:
+`pyproject.toml` and a release config, so it is a valid subject for its own assertions.
+That is what `make rhiza-test` is:
 
 ```bash
-uv run pytest --pyargs pytest_rhiza.checks.test_readme pytest_rhiza.checks.test_pyproject
+make rhiza-test
 ```
+
+It names the five modules this project is a subject for, and deliberately not
+`test_cargo_toml` or `test_go_module`: there is no `Cargo.toml` or `go.mod` here for them
+to judge, and a check with no subject skips, which reads as a pass (#34). The five come to
+the same 34 assertions the `(RHIZA) CI` job runs, so a green local sweep means a green
+pipeline here as well.
 
 ## License
 

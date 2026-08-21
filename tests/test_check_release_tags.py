@@ -55,6 +55,29 @@ class TestReachability:
         assert result.returncode == 0, result.stdout + result.stderr
         assert "No version tags found" in result.stdout, result.stdout
 
+    def test_a_tag_that_does_not_resolve_to_a_commit_skips(self, subject: Callable[..., Subject]) -> None:
+        """A tag git cannot dereference to a commit is unjudgeable, not a failure (#45).
+
+        The third of the silent-skip paths #45 was filed for, and the one that looked
+        untestable: it needs ``git tag --list`` to report a tag while
+        ``git rev-parse <tag>^{commit}`` fails, on a repository that is *not* shallow — the
+        shallow branch above would otherwise fire first.
+
+        Tagging a tree object rather than a commit produces exactly that state. It is also
+        a real way to reach it: ``git tag v1 $(git rev-parse HEAD^{tree})`` is a plausible
+        slip, and the tag it leaves behind is reported by every listing while dereferencing
+        to a commit is an error. Reachability genuinely cannot be judged from it, so
+        skipping is right — but it has to be a skip that says why.
+        """
+        repo = subject({"README.md": "# Demo\n"})
+        tree = repo.git("rev-parse", "HEAD^{tree}").stdout.strip()
+        repo.git("tag", "v3.0.0", tree)
+
+        result = repo.run("test_release_tags")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "tagged commit for v3.0.0 is not present locally" in result.stdout, result.stdout
+
     def test_a_shallow_clone_skips_because_the_graph_is_incomplete(self, subject: Callable[..., Subject]) -> None:
         """CI clones shallowly by default, and reachability cannot be judged from a truncated graph.
 

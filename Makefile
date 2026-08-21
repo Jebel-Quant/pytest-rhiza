@@ -7,7 +7,7 @@
 
 PREK := uvx prek
 
-.PHONY: help lint install-hooks typecheck docs-coverage security test clean
+.PHONY: help lint install-hooks typecheck docs-coverage security test rhiza-test clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -52,6 +52,29 @@ security: ## Bandit scan of src (mirrors the rhiza_ci "Security scanning" job)
 # checks only ever execute in child processes.
 test: ## Run the test suite with coverage
 	uv run --group test pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
+
+# The checks this package ships, run against this repository (#47).
+#
+# README.md claimed `make rhiza-test` was what kept its module-list table honest, and no
+# such target existed: the fence was only ever executed by the upstream reusable workflow,
+# so a contributor could not reproduce a red check locally. That is the same hazard the
+# comment above `typecheck` names, one gate over — and the README naming a target that is
+# not there is worse than the gap it papers over.
+#
+# `test_cargo_toml` and `test_go_module` are absent from the list deliberately: there is no
+# Cargo.toml or go.mod here for them to judge, and a check with no subject would skip,
+# which reads as a pass (#34).
+#
+# RHIZA_DOCTEST_FOLDERS is left unset on purpose — this project's Python *is* under `src`,
+# which is the variable's own fallback, so setting it would add a second place to keep the
+# folder name correct. A consumer whose layout differs is the case the README documents.
+rhiza-test: ## Run this package's checks against this repository
+	uv run --group test pytest -ra --pyargs \
+		pytest_rhiza.checks.test_readme \
+		pytest_rhiza.checks.test_readme_validation \
+		pytest_rhiza.checks.test_pyproject \
+		pytest_rhiza.checks.test_docstrings \
+		pytest_rhiza.checks.test_release_tags
 
 clean: ## Remove build artefacts and caches
 	rm -rf dist build .pytest_cache .ruff_cache .coverage htmlcov *.egg-info src/*.egg-info

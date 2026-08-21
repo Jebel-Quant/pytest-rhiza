@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import logging
 import pathlib
-import shutil
-import subprocess  # nosec B404
 
 import pytest
 
-_GIT = shutil.which("git") or "/usr/bin/git"
+from pytest_rhiza._process import git
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -156,12 +154,7 @@ def latest_tag(root: pathlib.Path) -> str:
     Returns:
         str: The highest version tag, e.g. ``v1.3.1``.
     """
-    result = subprocess.run(  # noqa: S603 - fixed argument list, no shell  # nosec B603
-        [_GIT, "tag", "--list", "v*", "--sort=-version:refname"],
-        capture_output=True,
-        text=True,
-        cwd=root,
-    )
+    result = git(root, "tag", "--list", "v*", "--sort=-version:refname")
     tags = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not tags:
         pytest.skip("No version tags found in repository")

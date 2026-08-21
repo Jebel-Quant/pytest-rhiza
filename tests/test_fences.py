@@ -196,6 +196,28 @@ class TestBashUsable:
         monkeypatch.setattr(_fences, "BASH", "no-such-shell-anywhere")
         assert bash_usable() is False
 
+    def test_rejects_a_bash_that_hangs(self, monkeypatch) -> None:
+        """A bash that cannot parse ``:`` inside the budget is not usable either (#44).
+
+        The probe is bounded like every other child process in the package, and the
+        verdict on a timeout is the same as on a missing binary rather than a failure:
+        this function's whole job is to answer "can this platform parse fences at all",
+        and "it never came back" is a no. Reporting it as a failure instead would accuse
+        every README of a defect the toolchain invented — the same mistake the WSL-stub
+        case above exists to prevent.
+
+        Faked, because a bash that hangs on ``:`` cannot be produced on demand.
+        """
+        bash_usable.cache_clear()
+
+        def _hangs(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            """Stand in for a bash that never returns."""
+            raise subprocess.TimeoutExpired(cmd=["bash", "-n"], timeout=1)
+
+        monkeypatch.setattr(_fences.subprocess, "run", _hangs)
+        assert bash_usable() is False
+        bash_usable.cache_clear()
+
     def test_accepts_an_interpreter_that_parses(self, monkeypatch) -> None:
         """A bash that exits zero is usable — the mirror of the silent-failure case."""
         bash_usable.cache_clear()

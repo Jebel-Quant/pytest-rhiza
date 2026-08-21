@@ -13,13 +13,11 @@ places changelog boundaries at tags. An unreachable tag breaks both.
 
 from __future__ import annotations
 
-import shutil
-import subprocess  # nosec B404
 from pathlib import Path
 
 import pytest
 
-_GIT = shutil.which("git") or "/usr/bin/git"
+from pytest_rhiza._process import git
 
 
 def test_latest_tag_is_reachable_from_a_branch(latest_tag: str, root: Path) -> None:
@@ -36,26 +34,14 @@ def test_latest_tag_is_reachable_from_a_branch(latest_tag: str, root: Path) -> N
     folds its commits into the next release. Bump tooling reading the version from
     ``git describe`` skips the release for the same reason.
     """
-    if (
-        subprocess.run(  # nosec B603
-            [_GIT, "rev-parse", "--is-shallow-repository"], capture_output=True, text=True, cwd=root
-        ).stdout.strip()
-        == "true"
-    ):
+    if git(root, "rev-parse", "--is-shallow-repository").stdout.strip() == "true":
         pytest.skip("shallow clone — the commit graph is incomplete")
 
-    commit = subprocess.run(  # nosec B603
-        [_GIT, "rev-parse", f"{latest_tag}^{{commit}}"], capture_output=True, text=True, cwd=root
-    )
+    commit = git(root, "rev-parse", f"{latest_tag}^{{commit}}")
     if commit.returncode != 0:
         pytest.skip(f"tagged commit for {latest_tag} is not present locally")
 
-    contains = subprocess.run(  # nosec B603
-        [_GIT, "branch", "-a", "--contains", commit.stdout.strip(), "--format=%(refname:short)"],
-        capture_output=True,
-        text=True,
-        cwd=root,
-    )
+    contains = git(root, "branch", "-a", "--contains", commit.stdout.strip(), "--format=%(refname:short)")
     assert contains.stdout.strip(), (
         f"Tag {latest_tag} points at {commit.stdout.strip()[:12]}, which no branch contains. "
         f"It is most likely the pre-squash commit of a squash-merged release branch: "
