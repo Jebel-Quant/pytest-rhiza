@@ -355,14 +355,28 @@ jobs:
         with:
           enable-cache: true
 
-      # RHIZA_DOCTEST_FOLDERS is left unset on purpose — this project's Python *is* under
-      # `src`, which is the variable's own fallback, so setting it would add a second place
-      # to keep the folder name correct.
+      # RHIZA_DOCTEST_FOLDERS names both folders because `scripts` was folded into every
+      # other gate one issue at a time — `ty`/`mypy --strict` in #66, `--cov=scripts` in
+      # #69, interrogate's path list from the start — and this one was missed (#81). The
+      # variable's own fallback is `src` alone, so leaving it unset measured a strictly
+      # smaller tree than the rest: a doctest under `scripts/` would never be executed,
+      # and `test_doctests` *skips* rather than fails when it attempts none, which is the
+      # #34 failure mode of a check with no subject reading as a pass.
+      #
+      # It was previously left unset deliberately, on the grounds that `src` is the
+      # fallback and a second home for the folder name is a second thing to keep correct.
+      # That reasoning predated `scripts/` being in scope at all. The second home is real
+      # and is `GATE_ENV` in `scripts/gates.py`, which sets the same value so that
+      # `python scripts/gates.py rhiza-test` doctests what this job does —
+      # `tests/test_readme_gates.py` compares `run:` blocks only, so it cannot pin an
+      # `env:` block the way it pins a command line.
       #
       # `-rs` prints skip reasons, which is what the guard reads. With tags present these
       # five modules are 34 passed / 0 skipped, so "no skips" is a bar this repo actually
       # meets rather than an aspiration.
       - name: Run this package's checks against this repository
+        env:
+          RHIZA_DOCTEST_FOLDERS: "src scripts"
         run: |
           set -o pipefail
           uv run --group test pytest -ra -rs --pyargs \

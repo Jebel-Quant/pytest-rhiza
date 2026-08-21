@@ -25,6 +25,8 @@ thing actually executed — the parser has to be the same one for the chain to h
 * ``rhiza-test``'s documented line stops at the pytest invocation. CI wraps it in a guard
   that fails the job when any check *skips*, because a skipped assertion reads as a pass
   (#34) — :data:`SKIP_GUARD` carries that guard here, so a local pass means what CI's does.
+  Its job also sets ``RHIZA_DOCTEST_FOLDERS``, which decides which folders the doctest
+  sweep walks; :data:`GATE_ENV` carries that for the same reason (#81).
 
 Usage::
 
@@ -37,6 +39,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shlex
 import subprocess  # nosec B404
@@ -67,6 +70,23 @@ RESTORE_COMMAND = "uv sync"
 #: scaffolding allowlists in `tests/test_readme_gates.py`, which is the other side of this
 #: fact: `_TRUNCATE_AT` there cuts the guard off the CI side of the comparison.
 SKIP_GUARD = frozenset({"rhiza-test"})
+
+#: Environment a gate's CI job sets, applied here too so a local run means what CI's does
+#: (#81). Only ``rhiza-test`` needs any: its doctest sweep resolves which folders to walk
+#: from ``RHIZA_DOCTEST_FOLDERS``, whose own fallback is ``src`` alone — a strictly smaller
+#: tree than the three gates that already name ``scripts`` (``ty``/``mypy`` in #66,
+#: ``--cov=scripts`` in #69, and interrogate's path list). Left unset, a doctest written
+#: under ``scripts/`` would never be executed by any gate, and ``test_doctests`` *skips*
+#: rather than fails when it attempts none — a check with no subject reading as a pass,
+#: which is the #34 failure mode this repository is otherwise most careful about.
+#:
+#: Declared rather than inferred, for the same reason as :data:`SKIP_GUARD`: it sits in a
+#: diff a reviewer sees. The value is written twice — here and on the ``rhiza-test`` job in
+#: ``ci.yml`` — because ``tests/test_readme_gates.py`` compares ``run:`` blocks only, so an
+#: ``env:`` block is invisible to the pin that would otherwise keep the two in step.
+GATE_ENV: dict[str, dict[str, str]] = {
+    "rhiza-test": {"RHIZA_DOCTEST_FOLDERS": "src scripts"},
+}
 
 _SKIPPED_MESSAGE = (
     "A self-applied check skipped. A skipped assertion reads as a pass, which is the "
@@ -114,7 +134,7 @@ def documented_gates() -> dict[str, list[str]]:
     return commands
 
 
-def _run(command: str, *, capture: bool) -> tuple[int, str]:
+def _run(command: str, *, capture: bool, env: dict[str, str] | None = None) -> tuple[int, str]:
     """Run one documented command line from the repository root.
 
     Args:
@@ -122,11 +142,15 @@ def _run(command: str, *, capture: bool) -> tuple[int, str]:
             without a shell, so its quoting is honoured and its metacharacters are not.
         capture: Whether to collect stdout for a guard to read afterwards. When false the
             child writes straight through, which is what keeps the slow gates legible.
+        env: Variables to add to this process's environment for the child, from
+            :data:`GATE_ENV`. Overlaid rather than replacing it, because the command needs
+            the ambient ``PATH`` and ``VIRTUAL_ENV`` that ``uv`` reads.
 
     Returns:
         The exit status, and the captured stdout (empty when ``capture`` is false).
     """
     argv = shlex.split(command)
+    child_env = {**os.environ, **env} if env else None
 
     # S603/B603 are suppressed on both calls below for one reason: the argument list comes
     # from README.md in this repository — reviewed content, and already the trust boundary
@@ -134,11 +158,11 @@ def _run(command: str, *, capture: bool) -> tuple[int, str]:
     # it is re-interpreted. The reason lives here rather than trailing the directive,
     # because prose after the code is what ruff reads as a second code.
     if not capture:
-        finished = subprocess.run(argv, cwd=ROOT, check=False)  # noqa: S603  # nosec B603
+        finished = subprocess.run(argv, cwd=ROOT, check=False, env=child_env)  # noqa: S603  # nosec B603
         return finished.returncode, ""
 
     proc = subprocess.run(  # noqa: S603  # nosec B603
-        argv, cwd=ROOT, check=False, capture_output=True, text=True
+        argv, cwd=ROOT, check=False, capture_output=True, text=True, env=child_env
     )
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
@@ -154,18 +178,19 @@ def run_gate(name: str, commands: list[str]) -> bool:
     and one which leaves it perturbed.
 
     Args:
-        name: The gate name, which selects the guard in :data:`SKIP_GUARD` and the restore
-            in :data:`DESTRUCTIVE`.
+        name: The gate name, which selects the guard in :data:`SKIP_GUARD`, the restore
+            in :data:`DESTRUCTIVE` and the environment in :data:`GATE_ENV`.
         commands: Its command lines, from :func:`documented_gates`.
 
     Returns:
         Whether the gate passed.
     """
     guarded = name in SKIP_GUARD
+    env = GATE_ENV.get(name)
     try:
         for command in commands:
             print(f"\n\033[1m→ {name}\033[0m: {command}", flush=True)
-            status, stdout = _run(command, capture=guarded)
+            status, stdout = _run(command, capture=guarded, env=env)
             if status != 0:
                 return False
             if guarded and "skipped" in stdout:
@@ -207,6 +232,37 @@ def select_gates(requested: list[str], documented: dict[str, list[str]], *, incl
     Raises:
         GatesError: A requested gate is not documented. Raising beats skipping it silently,
             which would run a smaller set than was asked for and still exit 0.
+
+    Examples:
+        Selection is ordered by ``documented`` rather than by the command line, so a run
+        reads the same way whatever order the arguments arrived in:
+
+        >>> documented = {"lint": [], "lowest-deps": [], "test": []}
+        >>> select_gates(["test", "lint"], documented, include_destructive=False)
+        ['lint', 'test']
+
+        A bare run leaves out what :data:`DESTRUCTIVE` names, and ``--all`` puts it back:
+
+        >>> select_gates([], documented, include_destructive=False)
+        ['lint', 'test']
+        >>> select_gates([], documented, include_destructive=True)
+        ['lint', 'lowest-deps', 'test']
+
+        Naming a destructive gate is itself the opt-in, so it runs without ``--all``:
+
+        >>> select_gates(["lowest-deps"], documented, include_destructive=False)
+        ['lowest-deps']
+
+        An undocumented name is an error rather than a silently smaller run. The message
+        is printed rather than left as a traceback, because the exception's qualified name
+        depends on whether the module was imported as ``gates`` or ``scripts.gates``:
+
+        >>> try:
+        ...     select_gates(["nope"], documented, include_destructive=False)
+        ... except GatesError as error:
+        ...     print(error)
+        no such gate: nope
+        known gates: lint, lowest-deps, test
     """
     unknown = sorted(set(requested) - set(documented))
     if unknown:

@@ -61,7 +61,14 @@ Two gates have side effects worth knowing before running them:
   call in a `grep` guard that fails the job if any check *skips*, and checks out with
   `fetch-depth: 0` so the tag-comparing assertions have tags to compare (#34). The README's
   copy stops at the pytest invocation, because the guard is a property of the pipeline —
-  `scripts/gates.py` carries the guard, so a local pass means what CI's does.
+  `scripts/gates.py` carries the guard, so a local pass means what CI's does. Its job also
+  sets `RHIZA_DOCTEST_FOLDERS` to `"src scripts"`, and `GATE_ENV` in `scripts/gates.py`
+  carries that for the same reason (#81): the variable's own fallback is `src` alone, so
+  leaving it unset held `scripts/` to a docstring *presence* bar with nothing running the
+  examples in those docstrings. It cannot live in the README fence — `_run` splits a
+  documented line with `shlex.split` and no shell, so a `KEY=value` prefix would become
+  `argv[0]` — so the value has two homes, and `tests/test_readme_gates.py` pins them
+  together in both directions the way it already pins the README to `ci.yml`.
 
 Thresholds are deliberately single-homed: the 100% docstring floor, the 90% coverage floor
 and `mypy`'s `--strict` all live on their CI command lines and are **not** mirrored into
@@ -149,9 +156,12 @@ mode (#34) is the one this suite is most careful about.
   is therefore opted out of in `[tool.check_test_layout]` with a recorded reason; tests are
   organised by behaviour in `tests/` instead.
 - **Docstring coverage is 100% over `src` *and* `tests`** — a test whose name is its only
-  explanation is what that bar exists to prevent. Docstrings here carry real doctests (84 of
-  them); `_resolve_root` documents its ladder by example precisely because a fixture needs a
-  live session to exercise.
+  explanation is what that bar exists to prevent. Docstrings here carry real doctests (90 of
+  them — 84 under `src`, 6 in `scripts/gates.py`); `_resolve_root` documents its ladder by
+  example precisely because a fixture needs a live session to exercise. The doctest gate
+  walks both folders since #81; before that an example under `scripts/` would have been
+  collected by nothing, and `test_doctests` *skips* rather than fails when it attempts
+  none.
 - **Version numbers live in exactly two places**, kept in step by
   `[[tool.bumpversion.files]]`: `[project].version` (read natively) and
   `pytest_rhiza.__version__`. `tests/test_version.py` asserts both that they agree and that

@@ -15,6 +15,10 @@ that equality says nothing about:
   README line it runs. CI fails ``rhiza-test`` when any check skips, because a skipped
   assertion reads as a pass; a local run that reported green on the same output would be
   worse than no runner at all.
+* the environment in :data:`scripts.gates.GATE_ENV`, which is the other place it does more
+  than the README line — the value has to reach the child process, and the ambient
+  environment has to survive being added to (#81). Whether that value is the one ``ci.yml``
+  sets is ``tests/test_readme_gates.py``'s job, not this module's.
 
 The guard tests drive it with a trivial subprocess that prints the tell-tale word rather
 than with a real check run, because what is under test is the reading of the output, not
@@ -28,7 +32,15 @@ from pathlib import Path
 
 import pytest
 
-from scripts.gates import DESTRUCTIVE, GatesError, documented_gates, main, run_gate, select_gates
+from scripts.gates import (
+    DESTRUCTIVE,
+    GATE_ENV,
+    GatesError,
+    documented_gates,
+    main,
+    run_gate,
+    select_gates,
+)
 
 # A fence with the two shapes that matter: a gate with one command, one with two, and a
 # destructive gate whose name is in DESTRUCTIVE.
@@ -358,3 +370,40 @@ class TestRunningCommands:
         """
         check = "import sys; raise SystemExit(0 if sys.argv[1] == 'MIT;MIT License' else 1)"
         assert run_gate("license", [f'"{sys.executable}" -c "{check}" "MIT;MIT License"']) is True
+
+
+class TestTheGateEnvironment:
+    """The declared variables must reach the child, without displacing the ambient ones."""
+
+    def test_a_declared_variable_reaches_the_child(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The whole point: `rhiza-test` runs with the folder list CI gives it (#81)."""
+        body = "import os; print(os.environ.get('RHIZA_DOCTEST_FOLDERS', 'unset'))"
+        assert run_gate("rhiza-test", [_script(body)]) is True
+        assert GATE_ENV["rhiza-test"]["RHIZA_DOCTEST_FOLDERS"] in capsys.readouterr().out
+
+    def test_an_undeclared_gate_gets_no_extra_environment(self, capfd: pytest.CaptureFixture[str]) -> None:
+        """Only `rhiza-test` is declared; `lint` must not inherit its folder list.
+
+        Asserted because the mapping is keyed by gate: a lookup that fell back to "all of
+        it" would leak a doctest folder list into gates that have nothing to do with
+        doctests, and nothing else here would notice.
+
+        ``capfd`` rather than ``capsys``, unlike its neighbours: `lint` is not in
+        :data:`scripts.gates.SKIP_GUARD`, so its child is run uncaptured and writes to the
+        file descriptor directly — which is the point of that branch, and invisible to a
+        fixture that only sees ``sys.stdout``.
+        """
+        body = "import os; print('FOLDERS=' + os.environ.get('RHIZA_DOCTEST_FOLDERS', 'unset'))"
+        assert run_gate("lint", [_script(body)]) is True
+        assert "FOLDERS=unset" in capfd.readouterr().out
+
+    def test_the_ambient_environment_survives(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Overlaid on `os.environ`, not substituted for it.
+
+        `subprocess.run(env=...)` *replaces* the environment rather than extending it, so
+        passing the declared mapping alone would strip `PATH` and `VIRTUAL_ENV` — and every
+        gate's command line begins with `uv`, which reads both.
+        """
+        body = "import os; print('PATH=' + str('PATH' in os.environ))"
+        assert run_gate("rhiza-test", [_script(body)]) is True
+        assert "PATH=True" in capsys.readouterr().out
