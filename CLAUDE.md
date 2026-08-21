@@ -32,7 +32,7 @@ uv sync
 uv run pytest                                   # whole suite
 uv run pytest tests/test_fences.py              # one file
 uv run pytest tests/test_fences.py::test_name   # one test
-uvx prek install                                # wire the formatting hooks
+uvx prek install                                # wire the pre-commit hooks
 ```
 
 The gates have a local entry point again as of #66 — **prefer it over retyping a command
@@ -160,6 +160,11 @@ mode (#34) is the one this suite is most careful about.
 - **No version literal in `README.md`.** The documented pin is a `<version>` placeholder;
   nothing bumps a number written there, so it rotted at `0.1.0` for three releases (#17).
   `tests/test_readme_pin.py` keeps a literal from creeping back.
+- **`src/pytest_rhiza/py.typed` is what makes `mypy --strict` worth anything to a consumer.**
+  Without the PEP 561 marker a type checker must treat the installed package as untyped, so
+  every annotation stops at this repository's edge (#73). `tests/test_py_typed.py` guards it
+  in two directions, because the failure is silent here: the suite runs against an editable
+  install, which finds the marker in `src` whether or not the wheel would ship it.
 - **Nothing here invokes `jebel-quant/rhiza`.** That repo pins pytest-rhiza as a dependency,
   so calling its reusable CI would close a cycle — rhiza's workflow running the gates that
   judge the package rhiza depends on. `rhiza_release.yml` is the one exception, synced

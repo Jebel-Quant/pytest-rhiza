@@ -1,0 +1,16 @@
+# Rules for the `markdownlint-cli2` hook in .pre-commit-config.yaml (#74).
+#
+# The default rule set, with one rule off. Exclusions are decisions, not omissions — the
+# same convention ruff.toml follows, one rationale per line.
+
+default: true
+
+# MD013 (line-length) is off, not raised. The prose in README.md and CLAUDE.md is written
+# one sentence-clause per line at roughly 90-100 characters, which is a deliberate house
+# style: it keeps a diff on a documentation change readable, since editing one clause
+# touches one line. Raising the limit to 120 to match ruff.toml's setting for *code* would
+# still flag the handful of long link-carrying lines and the wide table rows, so the rule
+# would have to be suppressed inline in the places it is least helpful. The rest of the
+# default set — heading structure, list and fence spacing, link syntax — is what this hook
+# is here for, and none of it depends on line width.
+MD013: false

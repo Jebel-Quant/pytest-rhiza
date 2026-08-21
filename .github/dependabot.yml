@@ -15,6 +15,13 @@
 version: 2
 updates:
   # Python dependencies using uv
+  #
+  # The major-version ignore is kept *here* and dropped from github-actions below (#75),
+  # because the two ecosystems fail differently. The runtime constraints in pyproject.toml
+  # are deliberately loose floors (`pytest>=8.1`), so a new major needs no manifest edit to
+  # be picked up, and `weekly.yml`'s `dep-compat` job resolves with `--upgrade --no-locked`
+  # every Monday specifically to catch one that breaks this package. Actions have neither
+  # property: a SHA pin is exact, and nothing else re-resolves it.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
@@ -42,6 +49,16 @@ updates:
       include: "scope"
 
   # GitHub Actions
+  #
+  # No `ignore` block here, unlike the `uv` ecosystem above, and the asymmetry is the point
+  # (#75). A SHA pin never moves on its own, so this is the only thing that can move it —
+  # which is what the header means by the pins going stale unnoticed. Suppressing majors
+  # would defer exactly that staleness to the next major boundary: when actions/checkout v8
+  # ships, the v7 SHA would sit here with no PR and no signal.
+  #
+  # The `groups` block below still only groups patch and minor, so a major arrives as its
+  # own PR rather than bundled into a batch nobody reads line by line. That is the right
+  # shape for a major: proposed, but never quietly.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -49,9 +66,6 @@ updates:
       day: "tuesday"
       time: "09:00"
       timezone: "Asia/Dubai"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
