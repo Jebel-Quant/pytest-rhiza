@@ -1,9 +1,9 @@
 """The README's gate commands must be the ones `.github/workflows/ci.yml` runs.
 
-Issue #58. #52 removed the Makefile and made `ci.yml` the single home for every gate
-command line, on the grounds that a second home is a second thing to keep correct. The
-cost, recorded in `ci.yml`'s own header and in #49 and #32, was that no gate had a local
-entry point at all: reproducing a red job meant opening a workflow file and reading YAML.
+Issue #58. #52 removed the Makefile and made `ci.yml` the definition of every gate command
+line, on the grounds that a second home is a second thing to keep correct. The cost,
+recorded in `ci.yml`'s own header and in #49 and #32, was that no gate had a local entry
+point at all: reproducing a red job meant opening a workflow file and reading YAML.
 
 The README now carries the command lines (see *Running one by hand*), which reintroduces
 exactly the duplication #52 argued against — so this module is the price of it. It asserts
@@ -11,22 +11,32 @@ that each documented command is the one its job actually runs, and that no gate 
 is undocumented. With that, the copy cannot drift silently, which is the property #52 was
 protecting; without it the block would be prose that was true once.
 
-**What is compared, and what is deliberately tolerated.** A documented command matches when
-its whitespace-separated tokens appear, *in order*, in one of its job's `run:` blocks. The
-tolerance is one-directional on purpose:
+**What is compared: token equality, in both directions (#63).** Until #63 a documented
+command matched when its tokens appeared, *in order*, anywhere in one of its job's `run:`
+blocks. That pinned every threshold the README claimed, but tolerated anything CI added on
+top: a *new* flag on a CI command left the documented line silently wrong, which is the
+drift #52 existed to prevent arriving through the door #58 opened.
 
-* A token the README has and CI does not is a **failure** — that covers every threshold
-  (`--cov-fail-under=90`, `--fail-under 100`, `-ll`), every path, and every flag.
-* A token CI has and the README does not is **allowed**, because CI legitimately carries
-  scaffolding a contributor should not type: `--python ${{ matrix.python-version }}` from
-  the matrix, the `| tee checks.log` pipeline behind `rhiza-test`'s skip guard, and the
-  `set -o pipefail` around it.
+The comparison is now an equality. What made a subsequence look unavoidable is that CI
+legitimately carries scaffolding a contributor should not type — the matrix's
+``--python ${{ matrix.python-version }}``, and the ``set -o pipefail`` / ``| tee
+checks.log`` skip guard wrapped around ``rhiza-test`` (#34). So that scaffolding is now
+*declared*, in :data:`_EXCISE`, :data:`_TRUNCATE_AT` and :data:`_DIAGNOSTIC` below, removed
+from the CI side, and what remains has to match token for token.
 
-The second half is a real gap and is stated rather than hidden: a *new* flag added to a CI
-command will not fail this suite. Catching that would mean asserting equality, which the
-matrix expression makes impossible without teaching this module about GitHub's template
-syntax. The threshold and the flag set the README claims are pinned; a CI-side addition is
-not.
+Declaring it is the whole improvement. An allowlist must be edited when new scaffolding
+appears, which puts the exception in a diff where a reviewer sees it; a subsequence match
+absorbed the same exception invisibly. :class:`TestTheScaffoldAllowlist` stops it rotting
+the other way, by failing when a declared fragment is no longer in `ci.yml` at all — so a
+dead entry cannot sit there quietly widening the tolerance.
+
+**What is still not caught**, stated rather than hidden, as the subsequence gap was:
+
+* The text *inside* ``rhiza-test``'s skip guard, everything after the ``|``. That is
+  pipeline machinery rather than a gate, which is why :data:`_TRUNCATE_AT` cuts there; a
+  flag added to the pytest command itself is before the cut and is caught.
+* `weekly.yml`. Its two jobs are documented in prose in the README rather than in the
+  fence, and nothing here reads that file.
 
 YAML is parsed here by hand. `ci.yml` is read for two things only — job names and `run:`
 bodies — and a dependency on PyYAML in a package installed in every rhiza-managed repo's
@@ -60,6 +70,36 @@ _BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+", "")
 # a contributor to reproduce, so it is documented in the table above the fence and not in it.
 _NOT_A_GATE = frozenset({"ci-gate"})
 
+# A shell line continuation inside a YAML block scalar. Pure line-wrapping: it is never part
+# of a command, and dropping it is what lets a wrapped CI command equal a one-line README one.
+_CONTINUATION = frozenset({"\\"})
+
+# CI-only scaffolding, declared per gate so the comparison can be an equality (#63).
+#
+# `_EXCISE` holds token runs deleted wherever they appear in the job's `run:` block.
+_EXCISE: dict[str, tuple[tuple[str, ...], ...]] = {
+    # The matrix supplies the interpreter; a contributor uses whatever `uv` resolves.
+    "test": (("--python", "${{", "matrix.python-version", "}}"),),
+    # The skip guard's `pipefail` — without it the `| tee` below would mask a red pytest.
+    "rhiza-test": (("set", "-o", "pipefail"),),
+}
+
+# The command ends at the first occurrence of this token; everything after is pipeline
+# machinery rather than the gate. Only `rhiza-test` has any: the `| tee checks.log` and the
+# `grep`/`exit 1` guard that fails the job when a check skips (#34).
+_TRUNCATE_AT: dict[str, str] = {
+    "rhiza-test": "|",
+}
+
+# `run:` blocks that are deliberately not in the README's fence, because they are diagnostics
+# rather than gates — nothing fails on them and there is nothing for a contributor to
+# reproduce. Declared in full, so a flag added to one of these still has to be declared here.
+_DIAGNOSTIC: dict[str, tuple[tuple[str, ...], ...]] = {
+    # Prints the resolved licence table for the log. The gate is the `--allow-only` run
+    # below it, which *is* documented.
+    "license": (("uv", "run", "--with", "pip-licenses", "pip-licenses", "--format", "markdown", "--with-urls"),),
+}
+
 
 def _normalise(text: str) -> list[str]:
     """Return ``text`` as whitespace-separated tokens.
@@ -76,18 +116,50 @@ def _normalise(text: str) -> list[str]:
     return text.split()
 
 
-def _is_subsequence(needle: list[str], haystack: list[str]) -> bool:
-    """Return whether every token of ``needle`` appears in ``haystack``, in order.
+def _drop_fragment(tokens: list[str], fragment: tuple[str, ...]) -> list[str]:
+    """Return ``tokens`` with the first contiguous occurrence of ``fragment`` removed.
+
+    Contiguous rather than scattered on purpose: ``--python`` and its matrix expression are
+    adjacent in the command, and matching them anywhere would let the allowlist excuse a
+    coincidence somewhere else in the line.
 
     Args:
-        needle: Tokens the README documents.
-        haystack: Tokens the workflow runs.
+        tokens: The CI side of the comparison.
+        fragment: A declared scaffolding run, from :data:`_EXCISE`.
 
     Returns:
-        True when the documented command is contained in the CI one.
+        ``tokens`` without that run, or unchanged when it does not appear.
     """
-    remaining = iter(haystack)
-    return all(token in remaining for token in needle)
+    width = len(fragment)
+    for start in range(len(tokens) - width + 1):
+        if tuple(tokens[start : start + width]) == fragment:
+            return tokens[:start] + tokens[start + width :]
+    return tokens
+
+
+def _reduce(gate: str, tokens: list[str]) -> list[str]:
+    """Return one CI ``run:`` block with this gate's declared scaffolding removed.
+
+    The order matters: truncating first discards the skip guard, so the ``set -o pipefail``
+    excision afterwards works on what is left of the command rather than on the guard.
+
+    Args:
+        gate: The job name, which is what the allowlists are keyed by.
+        tokens: The block's tokens, from :func:`_ci_jobs`.
+
+    Returns:
+        The tokens a contributor should be able to type, in order.
+    """
+    reduced = [token for token in tokens if token not in _CONTINUATION]
+
+    cut = _TRUNCATE_AT.get(gate)
+    if cut is not None and cut in reduced:
+        reduced = reduced[: reduced.index(cut)]
+
+    for fragment in _EXCISE.get(gate, ()):
+        reduced = _drop_fragment(reduced, fragment)
+
+    return reduced
 
 
 def _ci_jobs() -> dict[str, list[list[str]]]:
@@ -173,33 +245,80 @@ def _documented() -> dict[str, list[str]]:
     return commands
 
 
-class TestTheHelpers:
-    """The parsing, on synthetic input.
+def _reduced_blocks(gate: str, jobs: dict[str, list[list[str]]]) -> list[list[str]]:
+    """Return every ``run:`` block of ``gate``, scaffolding removed.
 
-    The two functions above are only ever run against files that are expected to agree, so
-    their interesting behaviour — a folded scalar, a subsequence that should *not* match —
-    would otherwise never execute.
+    Args:
+        gate: The job name.
+        jobs: The parsed workflow, from :func:`_ci_jobs`.
+
+    Returns:
+        One token list per block, in file order.
     """
+    return [_reduce(gate, block) for block in jobs.get(gate, [])]
 
-    def test_a_subsequence_matches_even_with_extra_ci_tokens(self) -> None:
-        """The matrix's `--python` argument is exactly this case."""
-        assert _is_subsequence(["uv", "run", "pytest"], ["uv", "run", "--python", "3.12", "pytest"])
 
-    def test_order_is_required(self) -> None:
-        """Tokens out of order are a different command, not the same one."""
-        assert not _is_subsequence(["pytest", "uv"], ["uv", "run", "pytest"])
+def _describe_mismatch(gate: str, command: str, blocks: list[list[str]]) -> str:
+    """Return a readable account of one documented command that matched nothing.
 
-    def test_a_missing_token_does_not_match(self) -> None:
-        """A threshold dropped from CI must not still match the README."""
-        assert not _is_subsequence(["--cov-fail-under=90"], ["pytest", "-ra"])
+    Both sides are printed as reduced token lists rather than as the raw strings, because
+    that is what the comparison actually saw — the difference is often one token, and
+    showing the original line invites hunting for a whitespace change that is not there.
 
-    def test_a_changed_threshold_does_not_match(self) -> None:
-        """The failure this module exists for: 90 in the README, 95 in CI."""
-        assert not _is_subsequence(["--cov-fail-under=90"], ["pytest", "--cov-fail-under=95"])
+    Args:
+        gate: The job name.
+        command: The line as the README documents it.
+        blocks: The job's ``run:`` blocks, already reduced.
+
+    Returns:
+        A multi-line description, indented to sit under the assertion message.
+    """
+    if not blocks:
+        return f"{gate}: no `run:` block at all\n    README: {' '.join(_normalise(command))}"
+    found = "\n            ".join(" ".join(block) for block in blocks)
+    return f"{gate}\n    README: {' '.join(_normalise(command))}\n    ci.yml: {found}"
+
+
+class TestTheHelpers:
+    """The parsing and the reduction, on synthetic input.
+
+    The functions above are only ever run against files that are expected to agree, so
+    their interesting behaviour — a folded scalar, a fragment that is not there — would
+    otherwise never execute.
+    """
 
     def test_folded_scalars_collapse_to_one_command(self) -> None:
         """A `run: >-` body spread over lines is the same token list as one line."""
         assert _normalise("uv run\n  --with ty\n  ty check src") == ["uv", "run", "--with", "ty", "ty", "check", "src"]
+
+    def test_a_fragment_is_removed_where_it_appears(self) -> None:
+        """The matrix's interpreter argument is exactly this case."""
+        tokens = ["uv", "run", "--python", "${{", "matrix.python-version", "}}", "pytest"]
+        assert _drop_fragment(tokens, ("--python", "${{", "matrix.python-version", "}}")) == ["uv", "run", "pytest"]
+
+    def test_a_fragment_must_be_contiguous(self) -> None:
+        """Scattered tokens are a coincidence, not the declared scaffolding."""
+        assert _drop_fragment(["a", "x", "b"], ("a", "b")) == ["a", "x", "b"]
+
+    def test_an_absent_fragment_leaves_the_tokens_alone(self) -> None:
+        """Reduction is not allowed to fail; `TestTheScaffoldAllowlist` reports staleness."""
+        assert _drop_fragment(["uv", "run", "pytest"], ("--python",)) == ["uv", "run", "pytest"]
+
+    def test_continuations_are_dropped(self) -> None:
+        """A wrapped CI command has to equal the one-line README copy."""
+        assert _reduce("nothing-declared", ["uv", "run", "\\", "pytest"]) == ["uv", "run", "pytest"]
+
+    def test_truncation_cuts_the_pipeline_machinery(self) -> None:
+        """`rhiza-test`'s skip guard is everything after the pipe."""
+        assert _reduce("rhiza-test", ["pytest", "--pyargs", "m", "|", "tee", "checks.log"]) == [
+            "pytest",
+            "--pyargs",
+            "m",
+        ]
+
+    def test_a_new_flag_survives_reduction(self) -> None:
+        """The whole point of #63: reduction must not absorb an undeclared flag."""
+        assert _reduce("test", ["pytest", "--exitfirst"]) == ["pytest", "--exitfirst"]
 
 
 class TestEveryGateIsDocumented:
@@ -241,11 +360,65 @@ class TestEveryGateIsDocumented:
         )
 
 
+class TestTheScaffoldAllowlist:
+    """The allowlist itself, which widens the tolerance and so must not rot.
+
+    Every entry excuses a difference between the README and `ci.yml`. An entry whose
+    scaffolding is gone excuses nothing and hides the fact that the tolerance is no longer
+    needed, so it is a failure rather than a harmless leftover.
+    """
+
+    def test_no_excised_fragment_is_stale(self) -> None:
+        """A declared fragment must still appear, contiguously, in its job."""
+        jobs = _ci_jobs()
+        stale = [
+            f"{gate}: {' '.join(fragment)}"
+            for gate, fragments in _EXCISE.items()
+            for fragment in fragments
+            if not any(_drop_fragment(block, fragment) != block for block in jobs.get(gate, []))
+        ]
+
+        assert not stale, (
+            f"_EXCISE declares scaffolding ci.yml no longer carries: {stale}. Delete the entry — "
+            "while it stands it widens the comparison for a difference that no longer exists."
+        )
+
+    def test_no_truncation_point_is_stale(self) -> None:
+        """And so must a declared truncation token."""
+        jobs = _ci_jobs()
+        stale = [
+            f"{gate}: {cut}"
+            for gate, cut in _TRUNCATE_AT.items()
+            if not any(cut in block for block in jobs.get(gate, []))
+        ]
+
+        assert not stale, (
+            f"_TRUNCATE_AT names tokens ci.yml no longer carries: {stale}. Delete the entry — it "
+            "silently discards the tail of every command in that job."
+        )
+
+    def test_no_diagnostic_block_is_stale(self) -> None:
+        """A diagnostic that is gone, or that gained a flag, must be re-declared."""
+        jobs = _ci_jobs()
+        stale = [
+            f"{gate}: {' '.join(declared)}"
+            for gate, blocks in _DIAGNOSTIC.items()
+            for declared in blocks
+            if list(declared) not in _reduced_blocks(gate, jobs)
+        ]
+
+        assert not stale, (
+            f"_DIAGNOSTIC declares run blocks ci.yml no longer runs verbatim: {stale}. Either the "
+            "step was removed — delete the entry — or it changed, in which case update it here so "
+            "the change is visible in a diff."
+        )
+
+
 class TestEachCommandMatchesCi:
-    """Each documented command against the job it claims to reproduce."""
+    """Each documented command against the job it claims to reproduce, and back again."""
 
     def test_documented_commands_are_the_ones_ci_runs(self) -> None:
-        """Every command must be a token-subsequence of one `run:` block in its job.
+        """Every command must equal one `run:` block of its job, scaffolding removed.
 
         One test over all of them rather than a parametrisation, because the useful failure
         message is the whole set of mismatches: a threshold bump touches several gates at
@@ -253,16 +426,45 @@ class TestEachCommandMatchesCi:
         """
         jobs = _ci_jobs()
         mismatched = [
-            f"{gate}: {command}"
+            _describe_mismatch(gate, command, _reduced_blocks(gate, jobs))
             for gate, commands in _documented().items()
             for command in commands
-            if not any(_is_subsequence(_normalise(command), block) for block in jobs.get(gate, []))
+            if _normalise(command) not in _reduced_blocks(gate, jobs)
         ]
 
         assert not mismatched, (
-            "the README documents commands that no `run:` block in their job matches:\n  "
+            "the README documents commands no `run:` block in their job matches:\n  "
             + "\n  ".join(mismatched)
-            + "\n\nci.yml is the definition (#52). Copy the line from there, or — if the "
-            "difference is CI-only scaffolding — trim the documented command to the part a "
-            "contributor should type."
+            + "\n\nci.yml is the definition (#52). Copy the line from there — or, if the "
+            "difference really is CI-only scaffolding, declare it in _EXCISE or _TRUNCATE_AT "
+            "above so the exception is visible rather than absorbed (#63)."
+        )
+
+    def test_every_ci_run_block_is_documented(self) -> None:
+        """And the reverse: a flag added CI-side must not pass silently.
+
+        This is the direction #63 added. It also catches a whole new `run:` block inside an
+        already-documented job, which `test_every_ci_job_appears_in_the_readme` cannot see
+        because the job name was already there.
+        """
+        documented = _documented()
+        jobs = _ci_jobs()
+        undocumented = []
+
+        for gate, blocks in jobs.items():
+            if gate in _NOT_A_GATE or gate not in documented:
+                continue
+            wanted = [_normalise(command) for command in documented[gate]]
+            allowed = [list(block) for block in _DIAGNOSTIC.get(gate, ())]
+            undocumented += [
+                f"{gate}: {' '.join(reduced)}"
+                for reduced in (_reduce(gate, block) for block in blocks)
+                if reduced not in wanted and reduced not in allowed
+            ]
+
+        assert not undocumented, (
+            "ci.yml runs gate commands the README does not document:\n  "
+            + "\n  ".join(sorted(undocumented))
+            + "\n\nUpdate the '#### Running one by hand' fence to match. If the block is a "
+            "diagnostic rather than a gate, declare it in _DIAGNOSTIC above."
         )

@@ -1,4 +1,6 @@
-# Hooks are run by prek (`make lint`), the Rust drop-in for pre-commit. The file
+# Hooks are run by prek, the Rust drop-in for pre-commit: `uvx prek run --all-files`, which
+# is both the `lint` job in .github/workflows/ci.yml and the line documented in README.md
+# under "Running one by hand". There is no `make lint` — the Makefile went at #52. The file
 # format is pre-commit's, so `pre-commit run` works against it unchanged.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

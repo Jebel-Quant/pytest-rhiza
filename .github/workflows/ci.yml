@@ -10,7 +10,16 @@ name: CI
 # Separately, `astral-sh/setup-uv` could not have used a floating major in any case: it
 # publishes no `v8`, `v9` or `v10` alias tag, so `@v10` does not resolve at all.
 #
-# THIS FILE IS THE ONLY HOME FOR THE GATE COMMAND LINES.
+# THIS FILE IS THE DEFINITION OF THE GATE COMMAND LINES.
+#
+# It was their only home until #58, which added a copy to README.md under "Running one by
+# hand" — because reproducing a red job otherwise meant opening this file and reading YAML,
+# a cost paid by every contributor including the ones who never write CI. This file is still
+# the definition; the README is a copy, and `tests/test_readme_gates.py` is what keeps it
+# one. That test compares the two token for token in both directions, so a flag added or a
+# threshold changed here fails the suite until the README is updated to match (#63). CI-only
+# scaffolding — the matrix's `--python`, the skip guard around `rhiza-test` — is declared in
+# that module's allowlist rather than silently tolerated.
 #
 # Until #52 they were owned by the reusable workflow `jebel-quant/rhiza`'s rhiza_ci.yml,
 # and this repo mirrored a subset into a Makefile so a contributor could reproduce a red
@@ -23,10 +32,11 @@ name: CI
 # So the gates are defined here, in full, and nothing in this file invokes rhiza or
 # rhiza-task. The one remaining rhiza_*.yml stub is a deliberate exception, below.
 #
-# The cost is stated plainly because it is real: there is no local entry point any more
-# (#49, #32). Reproducing a red gate means reading the command line out of this file and
-# running it. That was a deliberate call — see #52 — on the grounds that a Makefile in a
-# repo whose ecosystem retired make as an interface is a second thing to keep correct.
+# The cost is stated plainly because it is real: there is no *runnable* local entry point
+# any more (#49, #32) — no Makefile, no task runner. That was a deliberate call — see #52 —
+# on the grounds that a Makefile in a repo whose ecosystem retired make as an interface is a
+# second thing to keep correct. Reproducing a red gate means copying its command line, which
+# since #58 is a paste out of the README rather than a read of this YAML.
 #
 # `rhiza_codeql.yml` and `rhiza_scorecard.yml` are gone too. They called out to rhiza's
 # reusable CodeQL and OSSF Scorecard workflows, which meant a pinned edge to maintain for
