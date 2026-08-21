@@ -18,6 +18,7 @@ grouping rules.
 - Bound every child process, and close three quality findings
 - Give deptry a local gate, correct the README's CI claim, pin the rhiza refs
 - Close the four quality findings from #57-#60
+- Let the declared version lead the newest tag during a release
 
 ### 💼 Other
 

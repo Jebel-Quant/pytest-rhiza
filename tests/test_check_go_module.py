@@ -266,16 +266,29 @@ class TestBumpversionConfig:
 
 
 class TestTagAgreement:
-    """The constant and the newest tag are one fact recorded twice."""
+    """The constant must be the newest tag or ahead of it, never behind.
 
-    def test_a_constant_disagreeing_with_the_tag_is_reported(self, subject: Callable[..., Subject]) -> None:
-        """Consumers resolve the module at the tag, so drift means an unfetchable version."""
-        repo = subject(_module(**{VERSION_GO: 'package version\n\nconst Version = "9.9.9"\n'}), tag="v1.2.3")
+    See :class:`tests.test_check_pyproject.TestTagAgreement` for why equality was wrong
+    (#62). A constant behind the tag is the harmful direction: the binary reports a
+    version older than what consumers can already fetch.
+    """
+
+    def test_a_constant_behind_the_tag_is_reported(self, subject: Callable[..., Subject]) -> None:
+        """Consumers resolve the module at the tag, so a lagging constant misreports."""
+        repo = subject(_module(**{VERSION_GO: 'package version\n\nconst Version = "1.1.0"\n'}), tag="v1.2.3")
 
         result = repo.run("test_go_module")
 
         assert result.returncode != 0
-        assert "would report a version that cannot be fetched" in result.stdout, result.stdout
+        assert "would report a version older than the one that can be fetched" in result.stdout, result.stdout
+
+    def test_a_constant_ahead_of_the_tag_is_a_release_in_flight(self, subject: Callable[..., Subject]) -> None:
+        """A module whose bump has landed but whose tag has not is not drift."""
+        repo = subject(_module(**{VERSION_GO: 'package version\n\nconst Version = "9.9.9"\n'}), tag="v1.2.3")
+
+        result = repo.run("test_go_module")
+
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_an_untagged_repository_skips_the_comparison(self, subject: Callable[..., Subject]) -> None:
         """A module that has never released must not fail the version checks."""

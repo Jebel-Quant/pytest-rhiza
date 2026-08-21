@@ -157,6 +157,12 @@ line-ending = "auto"
     "ARG",     # pytest fixtures are requested by name for their side effects, not always read
     "RUF012",  # the contract's parameters are bare class attributes, not ClassVar
 ]
+# The tag-versus-declared-version assertion the layers share (#62). Same reasoning as
+# `_bumpversion.py` above: it holds assertions for the checks but must not sit under
+# `checks/`, where a consumer could name it on a `--pyargs` command line by mistake.
+"src/pytest_rhiza/_versions.py" = [
+    "S101",  # assert is the test idiom, and how every complaint in this package is reported
+]
 # Project test suite only — allowances the synced .rhiza/tests should not inherit
 "tests/**/*.py" = [
     "RUF002",  # docstrings quote prose with typographic unicode (e.g. en dash)

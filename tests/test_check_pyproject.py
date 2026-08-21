@@ -301,17 +301,39 @@ class TestBumpversionDiscovery:
 
 
 class TestTagAgreement:
-    """The manifest version and the newest tag are one fact recorded twice."""
+    """The manifest version must be the newest tag or ahead of it, never behind.
 
-    def test_a_version_disagreeing_with_the_tag_is_reported(self, subject: Callable[..., Subject]) -> None:
-        """v1.2.3 against 9.9.9 is drift someone introduced by hand."""
-        manifest = SOUND_PYPROJECT.replace('version = "1.2.3"', 'version = "9.9.9"')
+    Equality was the rule until #62, and it made every release pull request
+    unmergeable — phase A of ``/rhiza:release`` bumps the manifest and leaves the tag
+    for the merged commit, so leading the tag is the normal state of a release in
+    flight. Both directions are pinned below.
+    """
+
+    def test_a_version_behind_the_tag_is_reported(self, subject: Callable[..., Subject]) -> None:
+        """1.1.0 against v1.2.3 is drift: the next release would reuse a published number."""
+        manifest = SOUND_PYPROJECT.replace('version = "1.2.3"', 'version = "1.1.0"')
         repo = subject({"pyproject.toml": manifest}, tag="v1.2.3")
 
         result = repo.run("test_pyproject")
 
         assert result.returncode != 0
-        assert "does not match" in result.stdout, result.stdout
+        assert "is behind the newest git tag" in result.stdout, result.stdout
+
+    def test_a_version_ahead_of_the_tag_is_a_release_in_flight(self, subject: Callable[..., Subject]) -> None:
+        """9.9.9 against v1.2.3 must pass — this is the case #62 wrongly failed.
+
+        The number is deliberately absurd: the rule cannot tell a hand-typed version
+        from a legitimate pending bump, because on the default branch after a release
+        PR merges they are the same state. Ordering against the tag is the invariant;
+        whether the bump was sensible is what ``check_version_bump.py`` decides at tag
+        time.
+        """
+        manifest = SOUND_PYPROJECT.replace('version = "1.2.3"', 'version = "9.9.9"')
+        repo = subject({"pyproject.toml": manifest}, tag="v1.2.3")
+
+        result = repo.run("test_pyproject")
+
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_an_untagged_repository_skips_the_comparison(self, subject: Callable[..., Subject]) -> None:
         """A project that has never released must not fail the version checks."""

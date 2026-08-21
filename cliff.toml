@@ -81,6 +81,13 @@ commit_parsers = [
     { message = "^style", group = "<!-- 5 -->🎨 Styling" },
     { message = "^test", group = "<!-- 6 -->🧪 Testing" },
     { message = "^chore\\(release\\): prepare for", skip = true },
+    # `/rhiza:release` commits the bump as `chore: release vX.Y.Z`. Without this skip the
+    # generic `^chore` rule below files that commit as a changelog entry, so every release
+    # would list "Release vX.Y.Z" under Miscellaneous Tasks — an entry about the release
+    # rather than about anything the release did. It only bites when the changelog is
+    # regenerated after the bump commit exists, which is why it went unnoticed: the flow
+    # normally generates the changelog first and commits both together.
+    { message = "^chore: release", skip = true },
     { message = "^chore\\(deps.*\\)", skip = true },
     { message = "^chore\\(pr\\)", skip = true },
     { message = "^chore\\(pull\\)", skip = true },
