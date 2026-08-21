@@ -21,20 +21,17 @@ name: CI
 # Every other consumer gets a one-way edge; this one got a loop.
 #
 # So the gates are defined here, in full, and nothing in this file invokes rhiza or
-# rhiza-task. The remaining rhiza_*.yml stubs are deliberate exceptions, below.
+# rhiza-task. The one remaining rhiza_*.yml stub is a deliberate exception, below.
 #
 # The cost is stated plainly because it is real: there is no local entry point any more
 # (#49, #32). Reproducing a red gate means reading the command line out of this file and
 # running it. That was a deliberate call — see #52 — on the grounds that a Makefile in a
 # repo whose ecosystem retired make as an interface is a second thing to keep correct.
 #
-# `.github/workflows/rhiza_codeql.yml` and `rhiza_scorecard.yml` stay, and stay pinned to
-# the commit v1.4.2 dereferences to. Neither references rhiza-task or pytest-rhiza: they
-# are `github/codeql-action` and `ossf/scorecard-action` runs over the source tree, so
-# they carry no functional edge back to this package — only file provenance. Note v1.4.2
-# is an *annotated* tag, so `refs/tags/v1.4.2` names a tag object
-# (371fa308f5d6e3772aee99aad5ee9da2713089cb) distinct from the commit; the commit is what
-# is pinned, and both resolve to the same workflow blob.
+# `rhiza_codeql.yml` and `rhiza_scorecard.yml` are gone too. They called out to rhiza's
+# reusable CodeQL and OSSF Scorecard workflows, which meant a pinned edge to maintain for
+# scanning this repository does not depend on: no rhiza_*.yml stub is left that calls a
+# reusable workflow parameterised by this package.
 #
 # `rhiza_release.yml` stays unpinned and unedited: it is synced verbatim because PyPI
 # Trusted Publishing validates the exact workflow path, so its `uses:` lines are

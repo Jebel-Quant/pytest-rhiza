@@ -229,11 +229,11 @@ Both layers are gone, because the dependency direction made the first one a cycl
 running the gates that judge the package rhiza depends on. Every other consumer gets a
 one-way edge; this one got a loop.
 
-Two rhiza workflows stay, and they are not part of that loop: `rhiza_codeql.yml` and
-`rhiza_scorecard.yml` reference neither `rhiza-task` nor `pytest-rhiza` — they are
-`github/codeql-action` and `ossf/scorecard-action` runs over the source. `rhiza_release.yml`
-also stays, synced verbatim, because PyPI Trusted Publishing validates the exact workflow
-path.
+One rhiza workflow stays: `rhiza_release.yml`, synced verbatim, because PyPI Trusted
+Publishing validates the exact workflow path. The `rhiza_codeql.yml` and
+`rhiza_scorecard.yml` stubs are gone — they called rhiza's reusable CodeQL and OSSF
+Scorecard workflows, a pinned edge to keep current for scanning this repository does not
+depend on.
 
 The cost of dropping the Makefile is real and worth stating: **no gate has a local entry
 point any more** (#49, #32). That was the call made in #52 — a Makefile in a repo whose
