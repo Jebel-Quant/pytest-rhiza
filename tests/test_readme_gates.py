@@ -30,6 +30,15 @@ absorbed the same exception invisibly. :class:`TestTheScaffoldAllowlist` stops i
 the other way, by failing when a declared fragment is no longer in `ci.yml` at all — so a
 dead entry cannot sit there quietly widening the tolerance.
 
+**The environment is pinned too, in both directions (#81).** A gate's ``run:`` block is
+not the whole of what CI runs it with: ``rhiza-test`` also carries an ``env:`` block, and
+``RHIZA_DOCTEST_FOLDERS`` there decides which folders the doctest sweep walks. That value
+cannot live in the README fence, because :func:`scripts.gates._run` splits a documented
+line with :func:`shlex.split` and runs it without a shell, so a ``KEY=value`` prefix would
+become ``argv[0]`` rather than an assignment. It therefore has a second home —
+:data:`scripts.gates.GATE_ENV` — and :class:`TestTheGateEnvironment` is what stops the two
+drifting, the same job the command-line comparison does for the README.
+
 **What is still not caught**, stated rather than hidden, as the subsequence gap was:
 
 * The text *inside* ``rhiza-test``'s skip guard, everything after the ``|``. That is
@@ -48,7 +57,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from scripts.gates import documented_gates
+from scripts.gates import GATE_ENV, documented_gates
 
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / ".github" / "workflows" / "ci.yml"
@@ -62,6 +71,14 @@ _RUN = re.compile(r"^(\s*)run:(.*)$")
 
 # The block-scalar indicators that mean "the command is on the following lines".
 _BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+", "")
+
+# An `env:` key with no inline value, at any depth — job-level or step-level, both of which
+# apply to the `run:` blocks beneath them.
+_ENV = re.compile(r"^(\s*)env:\s*$")
+
+# One `KEY: value` pair inside an `env:` block. The value keeps its quotes here and is
+# stripped by the caller, so that `"src scripts"` and `src scripts` compare equal.
+_ENV_ENTRY = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*):\s*(.+?)\s*$")
 
 # `ci-gate` runs no gate: it reads `needs.*.result` so branch protection has one required
 # check instead of a list that must be edited whenever a job is added. There is nothing for
@@ -214,6 +231,58 @@ def _ci_jobs() -> dict[str, list[list[str]]]:
         jobs[job].append(_normalise("\n".join(body)))
 
     return jobs
+
+
+def _ci_env() -> dict[str, dict[str, str]]:
+    """Return every variable each job sets, keyed by job name.
+
+    Hand-parsed for the same reason as :func:`_ci_jobs` — see the module docstring. Both
+    ``env:`` depths are collected into one mapping per job, because a job-level block and a
+    step-level one are indistinguishable from the point of view of the command that runs
+    under them, which is what :data:`scripts.gates.GATE_ENV` models.
+
+    Returns:
+        Job name to its variables. A job that sets none is absent rather than empty.
+    """
+    env: dict[str, dict[str, str]] = {}
+    lines = CI.read_text(encoding="utf-8").splitlines()
+    in_jobs = False
+    job: str | None = None
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+
+        if line.rstrip() == "jobs:":
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if line.strip() and not line.startswith(" "):
+            break
+
+        match = _JOB.match(line)
+        if match:
+            job = match.group(1)
+            continue
+
+        block = _ENV.match(line)
+        if block is None or job is None:
+            continue
+
+        # Every following line indented past the `env:` key is one of its entries.
+        indent = len(block.group(1))
+        while index < len(lines):
+            entry = lines[index]
+            if entry.strip() and len(entry) - len(entry.lstrip()) <= indent:
+                break
+            index += 1
+            pair = _ENV_ENTRY.match(entry)
+            if pair is not None:
+                env.setdefault(job, {})[pair.group(1)] = pair.group(2).strip('"')
+
+    return env
 
 
 def _documented() -> dict[str, list[str]]:
@@ -453,4 +522,53 @@ class TestEachCommandMatchesCi:
             + "\n  ".join(sorted(undocumented))
             + "\n\nUpdate the '#### Running one by hand' fence to match. If the block is a "
             "diagnostic rather than a gate, declare it in _DIAGNOSTIC above."
+        )
+
+
+class TestTheGateEnvironment:
+    """`GATE_ENV` must be the environment `ci.yml` sets — in both directions (#81).
+
+    The value it carries decides which folders a gate measures, so a drift here is the
+    quiet kind: `RHIZA_DOCTEST_FOLDERS` set in CI but not in `scripts/gates.py` would mean
+    a doctest under `scripts/` runs in CI and not locally, and set in neither would mean it
+    runs nowhere while `test_doctests` *skips* and reads as a pass (#34).
+    """
+
+    def test_every_declared_variable_is_the_one_ci_sets(self) -> None:
+        """The runner must not set a value CI does not, or a different value for it."""
+        ci = _ci_env()
+        mismatched = [
+            f"{gate}: {key}={value!r} locally, {ci.get(gate, {}).get(key)!r} in ci.yml"
+            for gate, variables in GATE_ENV.items()
+            for key, value in variables.items()
+            if ci.get(gate, {}).get(key) != value
+        ]
+        assert not mismatched, (
+            "scripts/gates.py sets an environment ci.yml does not:\n  "
+            + "\n  ".join(sorted(mismatched))
+            + "\n\nGATE_ENV and the job's `env:` block are two homes for one value; update "
+            "whichever is wrong so a local run means what CI's does."
+        )
+
+    def test_ci_sets_nothing_the_runner_leaves_out(self) -> None:
+        """And the reverse, which is the direction that makes a local pass trustworthy.
+
+        `_NOT_A_GATE` is excluded because `ci-gate` sets `RESULTS` to read
+        `needs.*.result` — pipeline machinery with no gate for a contributor to reproduce,
+        the same reason its `run:` block is not in the README fence.
+        """
+        documented = _documented()
+        missing = [
+            f"{gate}: {key}={value!r}"
+            for gate, variables in _ci_env().items()
+            if gate not in _NOT_A_GATE and gate in documented
+            for key, value in variables.items()
+            if GATE_ENV.get(gate, {}).get(key) != value
+        ]
+        assert not missing, (
+            "ci.yml sets an environment scripts/gates.py does not:\n  "
+            + "\n  ".join(sorted(missing))
+            + "\n\nDeclare it in GATE_ENV, so `python scripts/gates.py <gate>` runs the "
+            "gate the way CI runs it. If it is pipeline machinery rather than part of the "
+            "gate, add its job to _NOT_A_GATE with the reason."
         )
