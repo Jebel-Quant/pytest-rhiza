@@ -54,8 +54,13 @@ _FENCE = re.compile(r"#### Running one by hand\n+```bash\n(.*?)```", re.DOTALL)
 #: they do to it. The README says the same thing in prose; naming one on the command line
 #: is the opt-in.
 DESTRUCTIVE: dict[str, str] = {
-    "lowest-deps": "rewrites uv.lock's resolution — run `uv sync` afterwards to restore it",
+    "lowest-deps": "rewrites uv.lock's resolution — restored with `uv sync` when the gate finishes",
 }
+
+#: Run after a gate in :data:`DESTRUCTIVE` to put the working tree back (#71). Running the
+#: README's command line by hand still needs this done by hand; doing it here is what makes
+#: the destructive gate repeat-safe, so that even ``--all`` leaves ``git status`` clean.
+RESTORE_COMMAND = "uv sync"
 
 #: Gates whose CI job wraps the documented command in the #34 skip guard. Declared rather
 #: than inferred, so it sits in a diff a reviewer sees — the same reasoning as the
@@ -143,23 +148,94 @@ def _run(command: str, *, capture: bool) -> tuple[int, str]:
 def run_gate(name: str, commands: list[str]) -> bool:
     """Run every command of one gate, in order, stopping at the first failure.
 
+    A gate in :data:`DESTRUCTIVE` is followed by :data:`RESTORE_COMMAND`, in a ``finally``
+    so that a gate which fails — or one interrupted part-way — restores the working tree as
+    well (#71). That is the difference between a gate which perturbs the tree while it runs
+    and one which leaves it perturbed.
+
     Args:
-        name: The gate name, which selects the guard in :data:`SKIP_GUARD`.
+        name: The gate name, which selects the guard in :data:`SKIP_GUARD` and the restore
+            in :data:`DESTRUCTIVE`.
         commands: Its command lines, from :func:`documented_gates`.
 
     Returns:
         Whether the gate passed.
     """
     guarded = name in SKIP_GUARD
-    for command in commands:
-        print(f"\n\033[1m→ {name}\033[0m: {command}", flush=True)
-        status, stdout = _run(command, capture=guarded)
-        if status != 0:
-            return False
-        if guarded and "skipped" in stdout:
-            print(f"\033[31m{_SKIPPED_MESSAGE}\033[0m")
-            return False
-    return True
+    try:
+        for command in commands:
+            print(f"\n\033[1m→ {name}\033[0m: {command}", flush=True)
+            status, stdout = _run(command, capture=guarded)
+            if status != 0:
+                return False
+            if guarded and "skipped" in stdout:
+                print(f"\033[31m{_SKIPPED_MESSAGE}\033[0m")
+                return False
+        return True
+    finally:
+        if name in DESTRUCTIVE:
+            print(f"\n\033[1m→ {name}\033[0m: {RESTORE_COMMAND}  [restoring the working tree]", flush=True)
+            _run(RESTORE_COMMAND, capture=False)
+
+
+def _print_listing(documented: dict[str, list[str]]) -> None:
+    """Print every documented gate and its command lines, for ``--list``.
+
+    Args:
+        documented: The mapping from :func:`documented_gates`.
+    """
+    for name, commands in documented.items():
+        note = f"  [skipped by default: {DESTRUCTIVE[name]}]" if name in DESTRUCTIVE else ""
+        print(f"{name}{note}")
+        for command in commands:
+            print(f"    {command}")
+
+
+def select_gates(requested: list[str], documented: dict[str, list[str]], *, include_destructive: bool) -> list[str]:
+    """Resolve which gates to run, in the order the README documents them.
+
+    Args:
+        requested: Gate names from the command line. Empty means the default set.
+        documented: The mapping from :func:`documented_gates`.
+        include_destructive: Whether ``--all`` was given. It only affects the default set —
+            naming a gate in :data:`DESTRUCTIVE` explicitly is itself the opt-in.
+
+    Returns:
+        The selected names, ordered as ``documented`` orders them rather than as they were
+        typed, so a run reads the same way whatever order the arguments arrived in.
+
+    Raises:
+        GatesError: A requested gate is not documented. Raising beats skipping it silently,
+            which would run a smaller set than was asked for and still exit 0.
+    """
+    unknown = sorted(set(requested) - set(documented))
+    if unknown:
+        message = f"no such gate: {', '.join(unknown)}\nknown gates: {', '.join(documented)}"
+        raise GatesError(message)
+
+    if requested:
+        return [name for name in documented if name in set(requested)]
+    return [name for name in documented if include_destructive or name not in DESTRUCTIVE]
+
+
+def _print_summary(selected: list[str], failed: list[str], documented: dict[str, list[str]]) -> None:
+    """Print the per-gate verdict, including the gates this run left out.
+
+    The not-selected lines are the point rather than padding: a summary listing only what
+    ran cannot be told apart from one where a gate was silently dropped.
+
+    Args:
+        selected: The gates that ran, in run order.
+        failed: Those of them that failed.
+        documented: The mapping from :func:`documented_gates`, for the not-selected lines.
+    """
+    print("\n\033[1msummary\033[0m")
+    for name in selected:
+        mark = "\033[31mFAIL\033[0m" if name in failed else "\033[32mPASS\033[0m"
+        print(f"  {mark}  {name}")
+    for name in documented:
+        if name not in selected:
+            print(f"  ----  {name} (not selected)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -168,6 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     Every selected gate runs even after one fails, so a single pass shows the whole
     picture rather than stopping at the first red — the same reason ``ci-gate`` aggregates
     instead of the jobs depending on each other.
+
+    The work is in :func:`documented_gates`, :func:`select_gates`, :func:`run_gate` and the
+    two printers; what is left here is the argument surface and the exit status. This was
+    one function until #70, where it measured CC 24 — breadth rather than nesting, but the
+    selection path it held was also the part no test reached, which is the more useful thing
+    the split bought.
 
     Args:
         argv: Command-line arguments, defaulting to :data:`sys.argv`.
@@ -185,47 +267,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", action="store_true", help="list the documented gates and exit")
     args = parser.parse_args(argv)
 
+    # One handler for both failures, because they are the same answer to the user: a README
+    # with no fence leaves nothing to choose from, and a typo names something that does not
+    # exist. Neither ran a gate, so neither is a gate failure — hence 2 rather than 1.
     try:
         documented = documented_gates()
+        if args.list:
+            _print_listing(documented)
+            return 0
+        selected = select_gates(args.gates, documented, include_destructive=args.all)
     except GatesError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-
-    if args.list:
-        for name, commands in documented.items():
-            note = f"  [skipped by default: {DESTRUCTIVE[name]}]" if name in DESTRUCTIVE else ""
-            print(f"{name}{note}")
-            for command in commands:
-                print(f"    {command}")
-        return 0
-
-    unknown = sorted(set(args.gates) - set(documented))
-    if unknown:
-        print(f"error: no such gate: {', '.join(unknown)}", file=sys.stderr)
-        print(f"known gates: {', '.join(documented)}", file=sys.stderr)
-        return 2
-
-    if args.gates:
-        selected = [name for name in documented if name in set(args.gates)]
-    else:
-        selected = [name for name in documented if args.all or name not in DESTRUCTIVE]
 
     for name in selected:
         if name in DESTRUCTIVE:
             print(f"\033[33mnote\033[0m: {name} {DESTRUCTIVE[name]}")
 
     failed = [name for name in selected if not run_gate(name, documented[name])]
-    skipped = [name for name in documented if name not in selected]
-
-    print("\n\033[1msummary\033[0m")
-    for name in selected:
-        mark = "\033[31mFAIL\033[0m" if name in failed else "\033[32mPASS\033[0m"
-        print(f"  {mark}  {name}")
-    for name in skipped:
-        print(f"  ----  {name} (not selected)")
-
+    _print_summary(selected, failed, documented)
     return 1 if failed else 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - exercised by running the script, not the suite
     sys.exit(main())

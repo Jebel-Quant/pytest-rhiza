@@ -115,10 +115,15 @@ jobs:
       # depends on `[tool.coverage.run] patch = ["subprocess"]` in pyproject.toml: the
       # checks are exercised by inner `pytest --pyargs` runs in subprocesses, which a
       # parent-only coverage run does not see.
+      #
+      # `scripts` is measured beside `src` since #69. Nothing under it ships in the wheel,
+      # which is why it was left out at first — but `scripts/gates.py` is what decides
+      # whether every other gate here is green, and it was the one module held to this
+      # repo's typing and docstring bars with no coverage floor behind them.
       - name: Run tests
         run: >-
           uv run --group test --python ${{ matrix.python-version }}
-          pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
+          pytest -ra --cov=src --cov=scripts --cov-report=term-missing --cov-fail-under=90
 
   typecheck:
     name: Type checking (ty + mypy --strict)

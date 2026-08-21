@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.gates import DESTRUCTIVE, GatesError, documented_gates, main, run_gate
+from scripts.gates import DESTRUCTIVE, GatesError, documented_gates, main, run_gate, select_gates
 
 # A fence with the two shapes that matter: a gate with one command, one with two, and a
 # destructive gate whose name is in DESTRUCTIVE.
@@ -49,6 +49,28 @@ uv sync --resolution lowest-direct
 
 More prose.
 """
+
+
+def _fence_of(gates: dict[str, list[str]]) -> str:
+    """Return a *Running one by hand* fence documenting the given gates.
+
+    The module-level :data:`_FENCE` documents real command lines, which is right for the
+    parser and the selection tests because neither executes anything. Tests that drive
+    :func:`main` all the way through to a run need commands that are safe to execute, and
+    so build their own fence here.
+
+    Args:
+        gates: Gate name to its command lines, in the order they should be written.
+
+    Returns:
+        Markdown holding a fence the parser will find.
+    """
+    lines = ["#### Running one by hand", "", "```bash"]
+    for name, commands in gates.items():
+        lines.append(f"# {name}")
+        lines.extend(commands)
+    lines.append("```")
+    return "\n".join(lines) + "\n"
 
 
 def _readme(tmp_path: Path, body: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,6 +101,25 @@ def _script(body: str) -> str:
     return f'"{sys.executable}" -c "{body}"'
 
 
+@pytest.fixture
+def stub_restore(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Replace the post-destructive ``uv sync`` with a harmless marker-printing script.
+
+    The restore added in #71 has to be exercised through the real code path rather than
+    asserted from the source, but a suite that genuinely re-resolved ``uv.lock`` would be
+    slow and would rewrite the working tree — the very thing the restore exists to undo.
+
+    Args:
+        monkeypatch: Used to repoint the module-level ``RESTORE_COMMAND``.
+
+    Returns:
+        The marker the stub prints, for the caller to assert on.
+    """
+    marker = "RESTORED"
+    monkeypatch.setattr("scripts.gates.RESTORE_COMMAND", _script(f"print('{marker}')"))
+    return marker
+
+
 class TestTheFenceParser:
     """:func:`documented_gates`, on input other than this repo's own README."""
 
@@ -102,6 +143,21 @@ class TestTheFenceParser:
 
         with pytest.raises(GatesError, match="Running one by hand"):
             documented_gates()
+
+    def test_blank_lines_inside_the_fence_are_skipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A blank line separating two gates is layout, not a command.
+
+        Worth pinning because the parser appends any non-comment line to the current gate:
+        without the skip, a gate would carry an empty command line and the runner would
+        hand :func:`shlex.split` nothing to run.
+        """
+        _readme(
+            tmp_path,
+            "#### Running one by hand\n\n```bash\n# lint\nuvx prek run\n\n# audit\nuvx pip-audit\n```\n",
+            monkeypatch,
+        )
+
+        assert documented_gates() == {"lint": ["uvx prek run"], "audit": ["uvx pip-audit"]}
 
     def test_this_repos_readme_still_parses(self) -> None:
         """A vacuity guard on the tests above: the real fence must not be empty."""
@@ -150,6 +206,113 @@ class TestSelection:
         assert main([]) == 0
         assert "lowest-deps (not selected)" in capsys.readouterr().out
 
+    def test_a_missing_fence_is_a_usage_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A restructured README exits 2 through :func:`main`, not just from the parser.
+
+        :class:`TestTheFenceParser` pins that :func:`documented_gates` raises; this pins
+        that the raise becomes a usage exit rather than a traceback, and that the message
+        naming the file survives to stderr.
+        """
+        _readme(tmp_path, "# Title\n\nNo fence here.\n", monkeypatch)
+
+        assert main([]) == 2
+        assert "Running one by hand" in capsys.readouterr().err
+
+    def test_a_named_gate_runs_only_itself(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Naming a gate narrows the run, and the summary says so for the rest."""
+        _readme(
+            tmp_path,
+            _fence_of({"lint": [_script("print('lint ran')")], "audit": [_script("print('audit ran')")]}),
+            monkeypatch,
+        )
+
+        assert main(["lint"]) == 0
+
+        out = capsys.readouterr().out
+        assert "lint ran" in out
+        assert "audit ran" not in out
+        assert "PASS" in out
+        assert "audit (not selected)" in out
+
+    def test_a_failing_gate_is_reported_and_sets_the_exit_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Exit 1, a FAIL line for the gate that failed — and the later gate still runs."""
+        _readme(
+            tmp_path,
+            _fence_of({"lint": [_script("raise SystemExit(1)")], "audit": [_script("print('audit ran')")]}),
+            monkeypatch,
+        )
+
+        assert main([]) == 1
+
+        out = capsys.readouterr().out
+        assert "FAIL" in out
+        assert "audit ran" in out, "a red gate must not stop the ones after it"
+
+    def test_all_opts_into_the_destructive_gate(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        stub_restore: str,
+    ) -> None:
+        """``--all`` selects ``lowest-deps``, and warns before running it."""
+        _readme(tmp_path, _fence_of({"lowest-deps": [_script("print('resolved')")]}), monkeypatch)
+
+        assert main(["--all"]) == 0
+
+        out = capsys.readouterr().out
+        assert DESTRUCTIVE["lowest-deps"] in out, "the note has to precede the damage"
+        assert "resolved" in out
+        assert stub_restore in out
+
+    def test_selection_follows_the_readme_order_not_the_command_line(self) -> None:
+        """Two gates named back-to-front still run in documented order.
+
+        A run whose order depended on the argument order would make two invocations that
+        asked for the same thing produce differently ordered output.
+        """
+        documented = {"lint": [], "typecheck": [], "test": []}
+
+        assert select_gates(["test", "lint"], documented, include_destructive=False) == ["lint", "test"]
+
+
+class TestRestoringTheWorkingTree:
+    """A destructive gate puts the tree back when it finishes (#71)."""
+
+    def test_a_destructive_gate_is_followed_by_the_restore(
+        self, capsys: pytest.CaptureFixture[str], stub_restore: str
+    ) -> None:
+        """The plain path: ``lowest-deps`` passes, and the lock is re-synced after it."""
+        assert run_gate("lowest-deps", [_script("print('resolved')")]) is True
+
+        out = capsys.readouterr().out
+        assert "resolved" in out
+        assert stub_restore in out
+
+    def test_the_restore_runs_even_when_the_gate_fails(
+        self, capsys: pytest.CaptureFixture[str], stub_restore: str
+    ) -> None:
+        """The reason it is a ``finally``: a red gate is exactly when the tree is dirty.
+
+        Returning early on failure without restoring would leave the lockfile rewritten in
+        precisely the case the contributor is already busy debugging.
+        """
+        assert run_gate("lowest-deps", [_script("raise SystemExit(1)")]) is False
+        assert stub_restore in capsys.readouterr().out
+
+    def test_a_harmless_gate_is_not_followed_by_a_restore(
+        self, capsys: pytest.CaptureFixture[str], stub_restore: str
+    ) -> None:
+        """Only :data:`DESTRUCTIVE` gates are restored — the rest must not pay for it."""
+        assert run_gate("lint", [_script("print('linted')")]) is True
+        assert stub_restore not in capsys.readouterr().out
+
 
 class TestTheSkipGuard:
     """`rhiza-test` fails locally on the output CI fails on (#34)."""
@@ -175,10 +338,17 @@ class TestRunningCommands:
         """The ordinary red-gate path."""
         assert run_gate("lint", [_script("raise SystemExit(1)")]) is False
 
-    def test_later_commands_do_not_run_after_a_failure(self) -> None:
-        """``lowest-deps`` is two commands and the second is meaningless if the first fails."""
+    def test_later_commands_do_not_run_after_a_failure(
+        self, capsys: pytest.CaptureFixture[str], stub_restore: str
+    ) -> None:
+        """``lowest-deps`` is two commands and the second is meaningless if the first fails.
+
+        It takes ``stub_restore`` because the gate it names is destructive: since #71 a real
+        run would re-resolve this repository's own lockfile mid-suite.
+        """
         marker = "second command ran"
         assert run_gate("lowest-deps", [_script("raise SystemExit(1)"), _script(f"print('{marker}')")]) is False
+        assert marker not in capsys.readouterr().out
 
     def test_quoted_arguments_survive_splitting(self) -> None:
         """The `license` gate passes one argument holding spaces and semicolons.

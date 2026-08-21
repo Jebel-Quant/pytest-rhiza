@@ -202,7 +202,7 @@ what it is.
 | gate | what it runs |
 | --- | --- |
 | `lint` | `uvx prek run --all-files` — every hook in `.pre-commit-config.yaml` |
-| `test` | the suite on 3 OSes × 4 Python versions, at a 90% coverage floor |
+| `test` | the suite on 3 OSes × 4 Python versions, over `src` and `scripts`, at a 90% floor |
 | `typecheck` | `ty check src scripts`, then `mypy --strict src scripts` |
 | `docs-coverage` | interrogate over `src`, `tests` and `scripts`, at a 100% floor |
 | `deptry` | declared-vs-imported deps, against `[tool.deptry]` in `pyproject.toml` |
@@ -232,7 +232,7 @@ uvx pip-audit
 # license
 uv run --with pip-licenses pip-licenses --allow-only "MIT;MIT License;BSD-2-Clause;BSD-3-Clause;Apache-2.0;Apache-2.0 OR BSD-2-Clause;DFSG approved"
 # test
-uv run --group test pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
+uv run --group test pytest -ra --cov=src --cov=scripts --cov-report=term-missing --cov-fail-under=90
 # lowest-deps
 uv sync --all-extras --all-groups --resolution lowest-direct
 uv run --all-extras --all-groups --resolution lowest-direct pytest -ra
@@ -272,8 +272,10 @@ its own way, that test would pin a parse of the README that nothing actually exe
 
 It also closes the two gaps above, which is most of why it is worth having. `lowest-deps` is
 excluded from a bare run and needs naming (or `--all`), because rewriting your lockfile
-should be something you asked for; and `rhiza-test` carries the `grep` guard, so a local
-pass means what CI's does instead of going green on `32 passed, 2 skipped`.
+should be something you asked for — and when the gate finishes the runner re-syncs the lock
+for you, in a `finally`, so a failing or interrupted run recovers too and even `--all` leaves
+`git status` clean (#71). And `rhiza-test` carries the `grep` guard, so a local pass means
+what CI's does instead of going green on `32 passed, 2 skipped`.
 
 Every selected gate runs even after one fails, and the summary at the end is the whole
 picture — the same reason `ci-gate` aggregates rather than the jobs depending on each other.
