@@ -35,6 +35,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from pytest_rhiza._toml import TomlTable
+
 # Read .rhiza/.env at collection time (no environment side-effects).
 RHIZA_ENV_PATH = Path(".rhiza/.env")
 
@@ -110,7 +112,7 @@ def read_rhiza_env(path: Path) -> dict[str, str]:
     return values
 
 
-def doctest_folders(root: Path, values: dict) -> list[Path]:
+def doctest_folders(root: Path, values: TomlTable) -> list[Path]:
     """Return the existing folders whose docstrings should be doctested.
 
     Args:
@@ -178,7 +180,7 @@ def doctest_folders(root: Path, values: dict) -> list[Path]:
     return folders
 
 
-def configured_label(values: dict) -> str:
+def configured_label(values: TomlTable) -> str:
     """Return the folder spec as it was configured, for the skip message.
 
     The skip has to name what was *asked for* rather than what was found — "no doctest

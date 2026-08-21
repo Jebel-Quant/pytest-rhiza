@@ -47,6 +47,8 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
+from pytest_rhiza._toml import TomlTable
+
 # The only filenames bump-my-version auto-discovers (#1453). Rust and Go projects own
 # none of them natively, which is why those bundles ship the first one.
 DISCOVERABLE_CONFIGS = (".bumpversion.toml", ".bumpversion.cfg", "setup.cfg", "pyproject.toml")
@@ -207,8 +209,14 @@ def legacy_config_hint(root: Path) -> str:
     )
 
 
-def bumpversion_table(path: Path) -> dict:
+def bumpversion_table(path: Path) -> TomlTable:
     """Return the ``[tool.bumpversion]`` table from a TOML config file.
+
+    A ``bumpversion`` key that is not itself a table reads as absent. That is the same
+    bar :func:`has_bumpversion_section` applies — it asks ``isinstance(..., dict)`` — and
+    the two disagreed until ``mypy --strict`` was added: this function would hand a
+    ``tool.bumpversion = "yes"`` straight back to callers that then subscript it, while
+    the other reported no config at all.
 
     Args:
         path: A config file known to exist and parse.
@@ -217,10 +225,12 @@ def bumpversion_table(path: Path) -> dict:
         The table, or an empty dict when the file declares none.
     """
     with path.open("rb") as handle:
-        return tomllib.load(handle).get("tool", {}).get("bumpversion", {})
+        data: TomlTable = tomllib.load(handle)
+    table = data.get("tool", {}).get("bumpversion", {})
+    return table if isinstance(table, dict) else {}
 
 
-def assert_release_flow_owns_the_commit_and_the_tag(table: dict) -> None:
+def assert_release_flow_owns_the_commit_and_the_tag(table: TomlTable) -> None:
     """Assert the config leaves committing and tagging to ``/rhiza:release``.
 
     Args:
@@ -279,7 +289,7 @@ class SyncedBumpversionConfig:
         return PurePosixPath(self.version_file).name
 
     @pytest.fixture
-    def bumpversion(self, root: Path) -> dict:
+    def bumpversion(self, root: Path) -> TomlTable:
         """Return the ``[tool.bumpversion]`` table from the synced config.
 
         Args:
@@ -320,7 +330,7 @@ class SyncedBumpversionConfig:
             f"first and wins, so the other config is inert — and being inert, it drifts."
         )
 
-    def test_the_config_does_not_pin_a_current_version(self, bumpversion: dict) -> None:
+    def test_the_config_does_not_pin_a_current_version(self, bumpversion: TomlTable) -> None:
         """``current_version`` must stay absent from a synced config.
 
         The file is owned by rhiza, so a value only the consuming repo can maintain would
@@ -333,7 +343,7 @@ class SyncedBumpversionConfig:
             "/rhiza:update would overwrite it. Omit the key and let the newest tag supply it."
         )
 
-    def test_the_config_targets_the_version_file(self, bumpversion: dict) -> None:
+    def test_the_config_targets_the_version_file(self, bumpversion: TomlTable) -> None:
         """A ``[[files]]`` entry must point at the version file, or nothing is rewritten.
 
         With no entry for it the bump still "succeeds": it reports a new version, and
@@ -345,7 +355,7 @@ class SyncedBumpversionConfig:
             f"{targets}); {self.untargeted_consequence}"
         )
 
-    def test_the_search_is_anchored_to_the_version_declaration(self, bumpversion: dict) -> None:
+    def test_the_search_is_anchored_to_the_version_declaration(self, bumpversion: TomlTable) -> None:
         """The search must be anchored, or it rewrites some other matching version.
 
         ``search``/``replace`` are applied to *every* occurrence in the file, so a bare
@@ -369,6 +379,6 @@ class SyncedBumpversionConfig:
                 f"the {self.version_file_label} entry's search {search!r} {self.unanchored_complaint}"
             )
 
-    def test_the_release_flow_owns_the_commit_and_the_tag(self, bumpversion: dict) -> None:
+    def test_the_release_flow_owns_the_commit_and_the_tag(self, bumpversion: TomlTable) -> None:
         """``/rhiza:release`` folds the changelog into the bump commit and tags it itself."""
         assert_release_flow_owns_the_commit_and_the_tag(bumpversion)

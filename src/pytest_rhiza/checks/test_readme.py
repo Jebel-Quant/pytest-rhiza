@@ -22,6 +22,7 @@ distribution is that home.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -80,7 +81,7 @@ class TestReadmeBashFragments:
     what this is for; a fence that cannot even parse is a documentation bug regardless.
     """
 
-    def test_bash_blocks_basic_syntax(self, root: Path, logger) -> None:
+    def test_bash_blocks_basic_syntax(self, root: Path, logger: logging.Logger) -> None:
         """Every non-skipped bash block should parse under `bash -n`.
 
         Skips where no working bash exists — see :func:`pytest_rhiza._fences.bash_usable`.

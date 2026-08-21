@@ -32,11 +32,13 @@ name: CI
 # So the gates are defined here, in full, and nothing in this file invokes rhiza or
 # rhiza-task. The one remaining rhiza_*.yml stub is a deliberate exception, below.
 #
-# The cost is stated plainly because it is real: there is no *runnable* local entry point
-# any more (#49, #32) — no Makefile, no task runner. That was a deliberate call — see #52 —
-# on the grounds that a Makefile in a repo whose ecosystem retired make as an interface is a
-# second thing to keep correct. Reproducing a red gate means copying its command line, which
-# since #58 is a paste out of the README rather than a read of this YAML.
+# There is still no Makefile and no task runner, and nothing here invokes rhiza-task. What
+# changed at #66 is that `scripts/gates.py` gives the gates a local entry point again — and
+# it does so without becoming the second home #52 removed, because it holds no recipes: it
+# parses the README fence this file is pinned to and runs what is written there. So the
+# ordering stands unchanged: this file defines, the README copies, the test pins, the runner
+# executes. Reproducing a red gate is `python scripts/gates.py <gate>`; the older paths —
+# a paste out of the README (#58), or reading this YAML (#49, #32) — both still work.
 #
 # `rhiza_codeql.yml` and `rhiza_scorecard.yml` are gone too. They called out to rhiza's
 # reusable CodeQL and OSSF Scorecard workflows, which meant a pinned edge to maintain for
@@ -119,7 +121,7 @@ jobs:
           pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
 
   typecheck:
-    name: Type checking (ty)
+    name: Type checking (ty + mypy --strict)
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -130,12 +132,36 @@ jobs:
         with:
           enable-cache: true
 
-      # src only, deliberately: tests/ leans on pytest fixtures and monkeypatching that
-      # a strict checker reads as untyped, and typing them would be noise rather than
-      # safety. `--with ty` rather than a dependency-group entry so the checker does not
-      # enter the runtime resolution of a package every rhiza-managed repo installs.
+      # `src` and `scripts`, but not `tests/`: the suite leans on pytest fixtures and
+      # monkeypatching that a strict checker reads as untyped, and typing it would be
+      # noise rather than safety. `scripts/` is ordinary annotated code and is checked
+      # like the package — it arrived with the gate runner (#66), and a new source
+      # directory outside every gate is how a blind spot becomes permanent.
+      #
+      # `--with ty` rather than a dependency-group entry so the checker does not enter the
+      # runtime resolution of a package every rhiza-managed repo installs.
       - name: Type-check src
-        run: uv run --with ty ty check src
+        run: uv run --with ty ty check src scripts
+
+      # Two checkers, because they answer different questions and the second one found
+      # things the first accepts (#67). `ty` infers and reports what it can prove wrong;
+      # `--strict` additionally *demands annotations*, which is a policy `ty` has no
+      # opinion on. On adoption it reported 61 errors over 7 files that `ty` passed
+      # clean: 40 bare `dict` annotations (i.e. `dict[Any, Any]`, erasing the known-`str`
+      # key type of every parsed TOML table), 18 unannotated functions, and two returns
+      # of `Any` from functions declaring a concrete type. One of those two was a real
+      # disagreement, not a notation gap — `bumpversion_table` handed back a non-table
+      # `tool.bumpversion` that `has_bumpversion_section` reported as absent.
+      #
+      # Keeping both is the point: dropping `ty` loses fast inference on every push,
+      # dropping mypy loses the annotation floor that keeps `Any` from spreading back in.
+      #
+      # No `[tool.mypy]` table, for the same reason interrogate's threshold and the
+      # coverage floor are not mirrored into pyproject.toml: one home per setting. The
+      # flags are here. And no `--group test` — pytest is a *runtime* dependency of this
+      # package, so `uv run` already resolves it and the stubs are present.
+      - name: Type-check src strictly
+        run: uv run --with mypy mypy --strict src scripts
 
   docs-coverage:
     name: Docstring coverage (interrogate)
@@ -159,7 +185,7 @@ jobs:
       - name: Check docstring coverage
         run: >-
           uv run --with interrogate interrogate -vv --fail-under 100
-          --ignore-init-method --ignore-magic src tests
+          --ignore-init-method --ignore-magic src tests scripts
 
   deptry:
     name: Dependency hygiene (deptry)
@@ -199,7 +225,7 @@ jobs:
       # narrow and each carries its reason in the line above it: a fixed argument list
       # with no shell is not the injection risk B404/B603 screen for.
       - name: Scan src for insecure patterns
-        run: uvx bandit -r src -ll -q
+        run: uvx bandit -r src scripts -ll -q
 
   audit:
     name: pip-audit (dependency CVEs)

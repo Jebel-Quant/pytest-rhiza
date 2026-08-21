@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from pytest_rhiza._bumpversion import SyncedBumpversionConfig
+from pytest_rhiza._toml import TomlTable
 from pytest_rhiza._versions import assert_declared_version_not_behind_tag
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
@@ -42,7 +43,7 @@ _REQUIRED_PACKAGE_FIELDS = ("name", "version", "edition", "description")
 
 
 @pytest.fixture(scope="module")
-def cargo_toml(root: Path) -> dict:
+def cargo_toml(root: Path) -> TomlTable:
     """Load and return Cargo.toml as a parsed dict."""
     path = root / "Cargo.toml"
     if not path.exists():
@@ -52,7 +53,7 @@ def cargo_toml(root: Path) -> dict:
 
 
 @pytest.fixture(scope="module")
-def package(cargo_toml: dict) -> dict:
+def package(cargo_toml: TomlTable) -> TomlTable:
     """Return the [package] table, skipping on a virtual workspace manifest.
 
     A workspace root legitimately has no ``[package]`` — it carries only
@@ -84,17 +85,17 @@ class TestPackageFields:
     """Tests for required fields within the [package] table."""
 
     @pytest.mark.parametrize("field", _REQUIRED_PACKAGE_FIELDS)
-    def test_required_field_present(self, package: dict, field: str) -> None:
+    def test_required_field_present(self, package: TomlTable, field: str) -> None:
         """Each required [package] field must be present."""
         assert field in package, f"[package] is missing required field '{field}'"
 
-    def test_name_is_non_empty_string(self, package: dict) -> None:
+    def test_name_is_non_empty_string(self, package: TomlTable) -> None:
         """[package].name must be a non-empty string."""
         name = package.get("name", "")
         assert isinstance(name, str), "[package].name must be a string"
         assert name.strip(), "[package].name must be a non-empty string"
 
-    def test_version_follows_semver(self, package: dict) -> None:
+    def test_version_follows_semver(self, package: TomlTable) -> None:
         """[package].version must follow semver (MAJOR.MINOR.PATCH).
 
         Not merely a convention here: ``.bumpversion.toml``'s ``parse`` regex and its
@@ -108,7 +109,7 @@ class TestPackageFields:
             f"[package].version {version!r} does not follow semver (expected MAJOR.MINOR.PATCH)"
         )
 
-    def test_description_is_non_empty_string(self, package: dict) -> None:
+    def test_description_is_non_empty_string(self, package: TomlTable) -> None:
         """[package].description must be a non-empty string."""
         desc = package.get("description", "")
         if isinstance(desc, dict):
@@ -116,7 +117,7 @@ class TestPackageFields:
         assert isinstance(desc, str), "[package].description must be a string"
         assert desc.strip(), "[package].description must be a non-empty string"
 
-    def test_a_license_is_declared(self, package: dict) -> None:
+    def test_a_license_is_declared(self, package: TomlTable) -> None:
         """[package] must declare `license` or `license-file`.
 
         ``make license`` is ``cargo deny check licenses`` and deny.toml is an
@@ -167,7 +168,7 @@ class TestGitTagVersion:
     ships for every language layer.
     """
 
-    def test_cargo_version_is_not_behind_the_latest_tag(self, latest_tag: str, package: dict) -> None:
+    def test_cargo_version_is_not_behind_the_latest_tag(self, latest_tag: str, package: TomlTable) -> None:
         """[package].version must be the newest vX.Y.Z tag, or ahead of it.
 
         This is the invariant ``.bumpversion.toml`` relies on rather than a style

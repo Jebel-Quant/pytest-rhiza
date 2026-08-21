@@ -25,16 +25,19 @@ from __future__ import annotations
 import doctest
 import importlib
 import importlib.util
+import logging
 import sys
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from pytest_rhiza._source_folder import RHIZA_ENV_PATH, configured_label, doctest_folders, read_rhiza_env
 
 
-def _iter_modules_from_path(logger, package_path: Path, src_path: Path):
+def _iter_modules_from_path(logger: logging.Logger, package_path: Path, src_path: Path) -> Iterator[ModuleType]:
     """Recursively find all Python modules in a directory."""
     for path in package_path.rglob("*.py"):
         if path.name == "__init__.py":
@@ -53,7 +56,7 @@ def _iter_modules_from_path(logger, package_path: Path, src_path: Path):
             continue
 
 
-def _find_packages(src_path: Path):
+def _find_packages(src_path: Path) -> Iterator[Path]:
     """Find all packages in the source path, including those nested under namespace packages.
 
     Sorted, like :func:`_iter_loose_modules` already sorts its files: ``rglob`` yields in
@@ -68,7 +71,9 @@ def _find_packages(src_path: Path):
             yield package_dir
 
 
-def _evict_shadowing_package(monkeypatch, logger, import_root: Path, package_dir: Path) -> None:
+def _evict_shadowing_package(
+    monkeypatch: pytest.MonkeyPatch, logger: logging.Logger, import_root: Path, package_dir: Path
+) -> None:
     """Drop a same-named package already imported from somewhere other than this folder.
 
     Without this the gate can report a pass having measured code that is not in the tree.
@@ -108,7 +113,7 @@ def _evict_shadowing_package(monkeypatch, logger, import_root: Path, package_dir
         monkeypatch.delitem(sys.modules, cached, raising=False)
 
 
-def _iter_loose_modules(logger, folder: Path):
+def _iter_loose_modules(logger: logging.Logger, folder: Path) -> Iterator[ModuleType]:
     """Import the top-level ``*.py`` files in ``folder`` that are not part of a package.
 
     A folder of standalone scripts (``utils/``, ``scripts/``, ``tools/``) has no
@@ -143,7 +148,9 @@ def _iter_loose_modules(logger, folder: Path):
         yield module
 
 
-def _iter_package_modules(logger, monkeypatch, src_path: Path, import_root: Path):
+def _iter_package_modules(
+    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, src_path: Path, import_root: Path
+) -> Iterator[ModuleType]:
     """Yield the modules of every package under one configured folder.
 
     Args:
@@ -179,7 +186,9 @@ def _iter_package_modules(logger, monkeypatch, src_path: Path, import_root: Path
         yield from modules
 
 
-def _iter_doctest_modules(logger, monkeypatch, folders: list[Path]):
+def _iter_doctest_modules(
+    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, folders: list[Path]
+) -> Iterator[ModuleType]:
     """Yield every module to doctest, across folders, packages and loose scripts.
 
     The three-deep walk that used to sit inline in :func:`test_doctests`. Pulling it out
@@ -266,7 +275,7 @@ class _Tally:
         )
 
 
-def _measure(logger, capsys: pytest.CaptureFixture[str], module) -> doctest.TestResults:
+def _measure(logger: logging.Logger, capsys: pytest.CaptureFixture[str], module: ModuleType) -> doctest.TestResults:
     """Run one module's doctests.
 
     Args:
@@ -287,7 +296,12 @@ def _measure(logger, capsys: pytest.CaptureFixture[str], module) -> doctest.Test
         )
 
 
-def _measure_all(logger, capsys: pytest.CaptureFixture[str], monkeypatch, folders: list[Path]) -> _Tally:
+def _measure_all(
+    logger: logging.Logger,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    folders: list[Path],
+) -> _Tally:
     """Doctest every module the folders yield and return the totals.
 
     Args:
@@ -315,7 +329,9 @@ def _measure_all(logger, capsys: pytest.CaptureFixture[str], monkeypatch, folder
     return tally
 
 
-def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+def test_doctests(
+    logger: logging.Logger, root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Run doctests for every module in the configured folders."""
     values = read_rhiza_env(root / RHIZA_ENV_PATH)
     folders = doctest_folders(root, values)
