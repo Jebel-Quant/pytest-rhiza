@@ -269,8 +269,10 @@ jobs:
       # fail-closed instead: an unlisted licence is a red job and a human decision.
       #
       # `Apache-2.0 OR BSD-2-Clause` is listed as one entry because pip-licenses does not
-      # split on ` OR ` — it splits on `;`. Verified both directions: the list below exits 0,
-      # and dropping any single entry from it exits 1.
+      # split on ` OR ` — it splits on `;`. Every entry below is load-bearing for today's
+      # closure except `BSD-3-Clause`, which is held in reserve: it was python-dotenv's, and
+      # #53 removed that dependency. It stays because BSD-3 is squarely within the policy, so
+      # the first BSD-3 dependency to arrive should not be a red build.
       - name: Print the resolved licence table
         run: uv run --with pip-licenses pip-licenses --format markdown --with-urls
 

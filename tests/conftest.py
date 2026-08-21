@@ -113,7 +113,7 @@ class Subject:
         Args:
             modules: Dotted module names, without the ``pytest_rhiza.checks.`` prefix.
             args: Extra arguments appended to the command line.
-            env: Environment entries to add for this run. ``make rhiza-test`` configures
+            env: Environment entries to add for this run. A consumer's gate configures
                 the docstring check through ``RHIZA_DOCTEST_FOLDERS``, so that path is
                 only reachable by setting it here.
 

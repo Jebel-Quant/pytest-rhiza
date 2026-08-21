@@ -14,7 +14,10 @@ falls back to ``SOURCE_FOLDER`` from ``.rhiza/.env``, then to ``src``.
 
 That ``.rhiza/.env`` rung is now a compatibility path rather than the documented home:
 rhiza retired the file at v1.4 in favour of ``[tool.rhiza-task] source-folder``. It is kept
-because a repo that has not migrated still has the file, and reading it costs nothing.
+because a repo that has not migrated still has the file, and reading it costs nothing —
+literally nothing since #53, which replaced ``dotenv_values`` with :func:`_read_rhiza_env`
+and dropped python-dotenv from the runtime dependencies. A whole dependency in every
+consumer's test environment was a steep price for one key on a legacy rung.
 Up to v1.3 the variable was exported by ``quality.mk`` from python-core's
 ``DOCSTRING_FOLDERS`` accumulator; that make layer no longer exists.
 
@@ -42,7 +45,6 @@ import warnings
 from pathlib import Path
 
 import pytest
-from dotenv import dotenv_values
 
 # Read .rhiza/.env at collection time (no environment side-effects).
 RHIZA_ENV_PATH = Path(".rhiza/.env")
@@ -124,6 +126,73 @@ def _evict_shadowing_package(monkeypatch, logger, import_root: Path, package_dir
     )
     for cached in [name for name in list(sys.modules) if name == top_level or name.startswith(f"{top_level}.")]:
         monkeypatch.delitem(sys.modules, cached, raising=False)
+
+
+def _read_rhiza_env(path: Path) -> dict[str, str]:
+    r"""Parse the ``KEY=value`` lines of a legacy ``.rhiza/.env``, if it is there.
+
+    This replaces ``dotenv_values`` from python-dotenv, which was a runtime dependency of
+    every rhiza-managed repo for the sake of one lookup — ``SOURCE_FOLDER``, on the
+    compatibility rung described in this module's docstring (#53). The file is written by
+    rhiza v1.3 and earlier, so its shape is known: ``KEY=value`` lines, comments, and
+    occasionally an ``export`` prefix. That is a much smaller grammar than dotenv
+    implements, and it is the whole grammar this rung has ever needed.
+
+    A line that does not parse is skipped rather than raised on, for the same reason
+    ``_budget`` in :mod:`pytest_rhiza._process` falls back instead of raising: this is a
+    compatibility path into a file the current toolchain no longer writes, and a stray
+    line in it must not be able to fail every check in the repository.
+
+    Args:
+        path: The ``.rhiza/.env`` to read.
+
+    Returns:
+        The parsed mapping, empty when the file is absent or unreadable.
+
+    Examples:
+        A missing file is the common case rather than an error — every repo on v1.4 or
+        later is this case:
+
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> _read_rhiza_env(root / ".rhiza" / ".env")
+        {}
+
+        Blank lines and comments are ignored, ``export`` is tolerated, and quotes around
+        the value are stripped:
+
+        >>> env = root / ".env"
+        >>> _ = env.write_text(
+        ...     "# where the python lives\n"
+        ...     "\n"
+        ...     'export SOURCE_FOLDER="utils"\n'
+        ...     "OTHER = 'spaced'\n"
+        ... )
+        >>> _read_rhiza_env(env) == {"SOURCE_FOLDER": "utils", "OTHER": "spaced"}
+        True
+
+        A line with no ``=``, and one with no name, are both skipped rather than raised
+        on — and skipping them does not stop the lines around them being read:
+
+        >>> _ = env.write_text("BROKEN\n=novalue\nSOURCE_FOLDER=src\n")
+        >>> _read_rhiza_env(env)
+        {'SOURCE_FOLDER': 'src'}
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    values: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.removeprefix("export ").lstrip().partition("=")
+        if not separator or not key.strip():
+            continue
+        values[key.strip()] = value.strip().strip("\"'")
+    return values
 
 
 def _doctest_folders(root: Path, values: dict) -> list[Path]:
@@ -420,7 +489,7 @@ def _measure_all(logger, capsys: pytest.CaptureFixture[str], monkeypatch, folder
 
 def test_doctests(logger, root, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
     """Run doctests for every module in the configured folders."""
-    values = dotenv_values(root / RHIZA_ENV_PATH) if (root / RHIZA_ENV_PATH).exists() else {}
+    values = _read_rhiza_env(root / RHIZA_ENV_PATH)
     folders = _doctest_folders(root, values)
 
     logger.info("Starting doctest discovery in: %s", [str(f) for f in folders] or "(nothing configured)")

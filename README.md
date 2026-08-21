@@ -19,9 +19,11 @@ them varies per project. Distributing them by file copy costs every consumer rep
   against itself
 
 All five go away when the checks are a dependency. The dependency list is deliberately
-four small packages — folding them into `rhiza` would pull `jinja2`, `typer`, `rich` and
+three small packages — folding them into `rhiza` would pull `jinja2`, `typer`, `rich` and
 `loguru` into every test environment, and into `rhiza-tools` would add `pandas` and
-`plotly`.
+`plotly`. It was four until #53 traded python-dotenv for ten lines of stdlib parsing: it
+bought one lookup on a rung that only repos still on rhiza v1.3 reach, and this package is
+installed in every rhiza-managed repo's test environment.
 
 ## Install
 
