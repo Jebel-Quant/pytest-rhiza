@@ -29,7 +29,8 @@ four small packages — folding them into `rhiza` would pull `jinja2`, `typer`, 
 uv add --dev pytest-rhiza
 ```
 
-Or, the way `make rhiza-test` does it, without touching the project's dependencies:
+Or, the way a consumer's `rhiza-test` gate does it, without touching the project's
+dependencies:
 
 ```bash
 uv run --with pytest-rhiza pytest --pyargs pytest_rhiza.checks.test_readme
@@ -62,8 +63,9 @@ explicitly with `--pyargs`. One module per file the template used to sync, names
 | `test_go_module` | `go-core` | `.rhiza/tests/test_go_module.py` |
 
 That table is not prose. The fence below enumerates what the installed package actually
-ships, and `make rhiza-test` executes it against this README — so adding or removing a
-check without updating the list above turns this block red:
+ships, and the `rhiza-test` job in `.github/workflows/ci.yml` executes it against this
+README — so adding or removing a check without updating the list above turns that job
+red:
 
 ```python
 import pkgutil
@@ -189,49 +191,64 @@ uv sync
 uv run pytest
 ```
 
-`make help` lists the gates:
+### The gates, and where they are defined
 
-| target | what it runs |
+**There is no Makefile, and no `.rhiza/` layer. `.github/workflows/ci.yml` is the single
+home for every gate command line** (#52). To reproduce one, copy its line out of that
+file — each job is a single command with a comment saying why its threshold is what it is.
+
+| gate | what it runs |
 | --- | --- |
-| `make lint` | all pre-commit hooks, via prek |
-| `make typecheck` | `ty check src` |
-| `make docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
-| `make deptry` | deptry over `src`, against `[tool.deptry]` in `pyproject.toml` |
-| `make security` | bandit over `src` |
-| `make test` | the suite, with the 90% coverage gate |
-| `make rhiza-test` | the checks this package ships, against this repository |
+| `lint` | `uvx prek run --all-files` — every hook in `.pre-commit-config.yaml` |
+| `test` | the suite on 3 OSes × 4 Python versions, at a 90% coverage floor |
+| `typecheck` | `ty check src` |
+| `docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
+| `deptry` | declared-vs-imported deps, against `[tool.deptry]` in `pyproject.toml` |
+| `security` | bandit over `src`, medium-and-above |
+| `audit` | `pip-audit` over the locked environment |
+| `lowest-deps` | the suite against `--resolution lowest-direct`, testing the version floors |
+| `license` | refuses strong copyleft in the runtime closure |
+| `rhiza-test` | the checks this package ships, against this repository, with tags |
+| `ci-gate` | one required check that fails unless every job above succeeded |
 
-Every one of those mirrors a CI job. **The converse does not hold, and this file used to
-claim it did** (#50): a green local sweep does *not* mean a green pipeline, because four
-gates run in CI with no local entry point at all.
+`weekly.yml` carries the two that are too slow or noisy for every push: a fresh
+dependency resolution, and a link check over this file.
 
-| CI-only gate | where | why it has no target |
-| --- | --- | --- |
-| `pip-audit` | `audit`, in `ci.yml` | resolves the *locked* environment against the advisory database, so it goes red on a new CVE with the source unchanged |
-| lowest-direct deps | `lowest-deps`, upstream | re-resolves with `--resolution lowest-direct` and re-runs the suite, which needs its own env rather than yours |
-| license compliance | `license`, upstream | scans the resolved dependency tree's licences |
-| CodeQL, Scorecard | their own workflows | whole-repo scanners with no meaningful local form |
+Day to day, `uv sync` then `uv run pytest` is the loop; `uvx prek install` wires the hooks
+so the formatting gate cannot surprise you.
 
-So the sweep predicts everything that depends on *this* source, and nothing that depends
-on what the lockfile resolves to on a given day. Those are the two failure modes to expect
-from a green local run, and neither is reachable by adding a target.
+### Why no Makefile, and why nothing calls jebel-quant/rhiza
 
-`typecheck`, `docs-coverage` and `security` take their flags from the reusable workflow
-`jebel-quant/rhiza/.github/workflows/rhiza_ci.yml`, so the recipes mirror those jobs
-rather than setting a threshold of their own. `deptry` is the exception: its configuration
-lives here, in `[tool.deptry]`, and it names the tool rather than `rhiza-task deps` so a
-local gate on this package does not pull in a released copy of this package — see the
-comments above them in the `Makefile`.
+This repository used to run rhiza's reusable CI (`rhiza_ci.yml`) like any consumer, and
+mirrored a subset of its gates into a Makefile so a contributor could reproduce a red job.
+Both layers are gone, because the dependency direction made the first one a cycle:
+**`jebel-quant/rhiza` pins pytest-rhiza as a dependency** — its `pyproject.toml` carries
+`pytest-rhiza @ git+…`— so this repository calling rhiza's CI meant rhiza's workflow
+running the gates that judge the package rhiza depends on. Every other consumer gets a
+one-way edge; this one got a loop.
+
+Two rhiza workflows stay, and they are not part of that loop: `rhiza_codeql.yml` and
+`rhiza_scorecard.yml` reference neither `rhiza-task` nor `pytest-rhiza` — they are
+`github/codeql-action` and `ossf/scorecard-action` runs over the source. `rhiza_release.yml`
+also stays, synced verbatim, because PyPI Trusted Publishing validates the exact workflow
+path.
+
+The cost of dropping the Makefile is real and worth stating: **no gate has a local entry
+point any more** (#49, #32). That was the call made in #52 — a Makefile in a repo whose
+ecosystem retired make as an interface is a second thing to keep correct — but it does mean
+the only way to run a gate by hand is to read its command line out of `ci.yml`.
+
+### The checks, self-applied
 
 The checks run against this repository too — it is a Python project with a README, a
 `pyproject.toml` and a release config, so it is a valid subject for its own assertions.
-That is what `make rhiza-test` is:
+That is what the `rhiza-test` job is:
 
 ```bash
-make rhiza-test
+uv run --group test pytest -ra --pyargs pytest_rhiza.checks.test_readme
 ```
 
-It names the five modules this project is a subject for, and deliberately not
+The job names the five modules this project is a subject for, and deliberately not
 `test_cargo_toml` or `test_go_module`: there is no `Cargo.toml` or `go.mod` here for them
 to judge, and a check with no subject skips, which reads as a pass (#34).
 

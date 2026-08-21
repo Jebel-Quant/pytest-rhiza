@@ -10,29 +10,42 @@ name: CI
 # Separately, `astral-sh/setup-uv` could not have used a floating major in any case: it
 # publishes no `v8`, `v9` or `v10` alias tag, so `@v10` does not resolve at all.
 #
-# `.github/workflows/rhiza_*.yml` are upstream files from jebel-quant/rhiza, and the same
-# rule now applies to them — but only to the half this repository actually decides (#51).
+# THIS FILE IS THE ONLY HOME FOR THE GATE COMMAND LINES.
 #
-# The four stubs (rhiza_ci, rhiza_codeql, rhiza_scorecard, rhiza_weekly) contain nothing but
-# a `uses:` line, and that line is a version selector written *here*. Upstream cannot pin it
-# on our behalf: it is the choice of which upstream commit runs. So those four are pinned to
-# the commit v1.4.2 dereferences to, trailing-commented with the tag, exactly as above. Note
-# v1.4.2 is an *annotated* tag, so `refs/tags/v1.4.2` names a tag object
-# (371fa308f5d6e3772aee99aad5ee9da2713089cb) distinct from the commit; the commit is what is
-# pinned, and both resolve to the same workflow blob.
+# Until #52 they were owned by the reusable workflow `jebel-quant/rhiza`'s rhiza_ci.yml,
+# and this repo mirrored a subset into a Makefile so a contributor could reproduce a red
+# job. Both layers are gone. The reason is the dependency direction: jebel-quant/rhiza
+# pins pytest-rhiza as a dependency (its pyproject.toml carries
+# `pytest-rhiza @ git+…@v0.2.1`), so this repository calling rhiza's reusable CI closed a
+# cycle — rhiza's workflow ran the gates that judged the package rhiza itself depends on.
+# Every other consumer gets a one-way edge; this one got a loop.
 #
-# rhiza_release.yml is the exception, and deliberately unpinned. It is synced verbatim rather
-# than as a stub because PyPI Trusted Publishing validates the exact workflow path — see its
-# own header — so its third-party `uses:` lines are upstream's text, not ours. SHA-pinning
-# them here would fork a file whose whole point is being byte-identical to upstream, and the
-# next re-sync would silently revert it. That half stays Jebel-Quant/rhiza#1577.
+# So the gates are defined here, in full, and nothing in this file invokes rhiza or
+# rhiza-task. The remaining rhiza_*.yml stubs are deliberate exceptions, below.
+#
+# The cost is stated plainly because it is real: there is no local entry point any more
+# (#49, #32). Reproducing a red gate means reading the command line out of this file and
+# running it. That was a deliberate call — see #52 — on the grounds that a Makefile in a
+# repo whose ecosystem retired make as an interface is a second thing to keep correct.
+#
+# `.github/workflows/rhiza_codeql.yml` and `rhiza_scorecard.yml` stay, and stay pinned to
+# the commit v1.4.2 dereferences to. Neither references rhiza-task or pytest-rhiza: they
+# are `github/codeql-action` and `ossf/scorecard-action` runs over the source tree, so
+# they carry no functional edge back to this package — only file provenance. Note v1.4.2
+# is an *annotated* tag, so `refs/tags/v1.4.2` names a tag object
+# (371fa308f5d6e3772aee99aad5ee9da2713089cb) distinct from the commit; the commit is what
+# is pinned, and both resolve to the same workflow blob.
+#
+# `rhiza_release.yml` stays unpinned and unedited: it is synced verbatim because PyPI
+# Trusted Publishing validates the exact workflow path, so its `uses:` lines are
+# upstream's text, not ours. That half remains Jebel-Quant/rhiza#1577.
 
 on:
   push:
     branches: [main]
   pull_request:
 
-# Least privilege: the suite only needs to read the code.
+# Least privilege: every job below only reads the code.
 permissions:
   contents: read
 
@@ -45,6 +58,7 @@ jobs:
   lint:
     name: prek (pre-commit hooks)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,8 +68,7 @@ jobs:
           enable-cache: true
 
       # prek is the Rust drop-in for pre-commit and reads .pre-commit-config.yaml
-      # unchanged. `uvx` fetches it, so there is no separate install step — the same
-      # command `make lint` runs locally.
+      # unchanged, so `uvx prek run --all-files` is also what a contributor runs.
       #
       # The ruff hooks rewrite files with `--fix` and `ruff format`; --show-diff-on-failure
       # prints what they would have changed, so a red run says which edit to make.
@@ -65,6 +78,7 @@ jobs:
   test:
     name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -88,19 +102,19 @@ jobs:
       # the tests build), and it is `git` on PATH that is used — `shutil.which` resolves
       # it, so the Windows runner's git works the same as the others.
       #
-      # The coverage flags mirror `make test` and `rhiza-task test`, so the threshold is
-      # the same number in all three places. Measuring it at all depends on
-      # `[tool.coverage.run] patch = ["subprocess"]` in pyproject.toml: the checks are
-      # exercised by inner `pytest --pyargs` runs in subprocesses, which a parent-only
-      # coverage run does not see.
+      # The 90 is the threshold, and this line is now its only home. Measuring it at all
+      # depends on `[tool.coverage.run] patch = ["subprocess"]` in pyproject.toml: the
+      # checks are exercised by inner `pytest --pyargs` runs in subprocesses, which a
+      # parent-only coverage run does not see.
       - name: Run tests
         run: >-
           uv run --group test --python ${{ matrix.python-version }}
           pytest -ra --cov=src --cov-report=term-missing --cov-fail-under=90
 
-  audit:
-    name: pip-audit (dependency CVEs)
+  typecheck:
+    name: Type checking (ty)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,64 +123,250 @@ jobs:
         with:
           enable-cache: true
 
-      # The `security` gate rhiza_ci.yml runs is bandit only — it scans *our* source for
-      # insecure patterns and never looks at what we depend on. This is the other half:
-      # pip-audit resolves the locked environment and checks it against the advisory
-      # database. It matters more here than in most projects, because pytest-rhiza is a
-      # runtime dependency of every rhiza-managed repo, so a vulnerable transitive
-      # dependency propagates into every consumer's test environment.
+      # src only, deliberately: tests/ leans on pytest fixtures and monkeypatching that
+      # a strict checker reads as untyped, and typing them would be noise rather than
+      # safety. `--with ty` rather than a dependency-group entry so the checker does not
+      # enter the runtime resolution of a package every rhiza-managed repo installs.
+      - name: Type-check src
+        run: uv run --with ty ty check src
+
+  docs-coverage:
+    name: Docstring coverage (interrogate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # 100 with no exemptions, over src *and* tests: a test whose name is its only
+      # explanation is the kind this suite specifically avoids. --ignore-init-method and
+      # --ignore-magic drop the two cases where a docstring would restate the signature.
+      #
+      # Deliberately not mirrored into `[tool.interrogate]` in pyproject.toml. One home
+      # for the number; a committed table would be a second, and two homes for one
+      # threshold is how they drift apart.
+      - name: Check docstring coverage
+        run: >-
+          uv run --with interrogate interrogate -vv --fail-under 100
+          --ignore-init-method --ignore-magic src tests
+
+  deptry:
+    name: Dependency hygiene (deptry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # The one gate whose configuration is *not* on this line: deptry reads
+      # `[tool.deptry]` from pyproject.toml, which carries the `python-dotenv` → `dotenv`
+      # module map and the DEP002 ignore for the entry-point-only pytest-timeout. Both
+      # are mappings for how deptry infers, not suppressions of a real gap.
+      #
+      # Before #49 this gate ran only inside rhiza's reusable workflow, so its config
+      # lived here while nothing in this repository ever invoked it.
+      - name: Check declared vs imported dependencies
+        run: uvx deptry src
+
+  security:
+    name: Security scanning (bandit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # -ll is medium-and-above. The `# nosec` markers in _process.py and conftest.py are
+      # narrow and each carries its reason in the line above it: a fixed argument list
+      # with no shell is not the injection risk B404/B603 screen for.
+      - name: Scan src for insecure patterns
+        run: uvx bandit -r src -ll -q
+
+  audit:
+    name: pip-audit (dependency CVEs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # The other half of `security`: bandit scans *our* source for insecure patterns and
+      # never looks at what we depend on. pip-audit resolves the locked environment and
+      # checks it against the advisory database. It matters more here than in most
+      # projects, because pytest-rhiza is a runtime dependency of every rhiza-managed
+      # repo, so a vulnerable transitive dependency propagates into every consumer's test
+      # environment.
       - name: Audit dependencies
         run: uvx pip-audit
 
-  self-check:
+  lowest-deps:
+    name: Lowest-direct dependency compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # The floors in pyproject.toml are claims, and this is what tests them. `pytest>=8.1`
+      # in particular is a *bisected* floor, not a guess — 8.0.x walks the generic ancestor
+      # chain of a `--pyargs` argument and dies on an unstat-able /home entry (#23) — so a
+      # gate that never resolves 8.1.1 would let that floor rot back to a version the
+      # package cannot actually run on.
+      - name: Install with lowest-direct resolution
+        run: uv sync --all-extras --all-groups --resolution lowest-direct
+
+      - name: Run tests against the floors
+        run: uv run --all-extras --all-groups --resolution lowest-direct pytest -ra
+
+  license:
+    name: License compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # This repository is MIT and is a runtime dependency of every rhiza-managed repo, so a
+      # strong-copyleft package entering its dependency closure would propagate an obligation
+      # into every consumer's test environment.
+      #
+      # NOTE: this policy is *this repository's own*, not a copy of the bar rhiza's reusable
+      # workflow used — that ran `rhiza-task license`, whose threshold is not visible from
+      # here. Stated rather than inherited, so it is reviewable (#52).
+      #
+      # `--allow-only`, not `--fail-on`, and the polarity is the whole point. `--fail-on`
+      # names the licences to refuse, so it passes whenever a copyleft package spells its
+      # licence in a way the list did not anticipate — and the spellings are genuinely
+      # inconsistent, because pip-licenses reports package metadata verbatim: this closure
+      # alone yields `MIT`, `MIT License`, `Apache-2.0` and `DFSG approved; MIT License`.
+      # Matching is per-name rather than substring (`IT` does not match `MIT`), so a deny
+      # list written in classifier prose misses the SPDX spelling of the same licence and
+      # goes green. That is the #34 failure mode with a licence attached, so the gate is
+      # fail-closed instead: an unlisted licence is a red job and a human decision.
+      #
+      # `Apache-2.0 OR BSD-2-Clause` is listed as one entry because pip-licenses does not
+      # split on ` OR ` — it splits on `;`. Verified both directions: the list below exits 0,
+      # and dropping any single entry from it exits 1.
+      - name: Print the resolved licence table
+        run: uv run --with pip-licenses pip-licenses --format markdown --with-urls
+
+      - name: Allow only permissive licences
+        run: >-
+          uv run --with pip-licenses pip-licenses --allow-only
+          "MIT;MIT License;BSD-2-Clause;BSD-3-Clause;Apache-2.0;Apache-2.0 OR BSD-2-Clause;DFSG approved"
+
+  rhiza-test:
     name: Rhiza checks, self-applied (with tags)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
-    # Why this job exists, when `(RHIZA) CI` already has a "Rhiza repository checks" job:
-    # that job is green while two of its assertions never run. Its log reads
+    # This package's own checks, run against this repository. It is a Python project with a
+    # README, a pyproject.toml and a release config, so it is a valid subject for its own
+    # assertions — and self-application is the only way the checks get exercised against a
+    # real repository rather than a fixture.
     #
-    #     SKIPPED [1] .../checks/test_release_tags.py:25: No version tags found in repository
-    #     SKIPPED [1] .../checks/test_pyproject.py:334: No version tags found in repository
-    #     32 passed, 2 skipped
+    # Two things this job does that rhiza's equivalent did not, which is why losing that
+    # workflow costs nothing here:
     #
-    # This repository has tags — v0.2.0, v0.2.1, v0.2.2 — so those are not honest skips.
-    # The reusable workflow's `actions/checkout` fetches none, `latest_tag` finds none, and
-    # the two assertions that compare [project].version against the newest vX.Y.Z skip. A
-    # gate that skips is not a gate, and a green job reporting coverage it does not have is
-    # worse than a red one (#34).
+    #   1. `fetch-depth: 0`. rhiza's checkout fetched no tags, so `latest_tag` found none
+    #      and the two assertions comparing [project].version against the newest vX.Y.Z
+    #      skipped — its log read `32 passed, 2 skipped` while reporting green (#34).
+    #   2. The no-skip guard below. Fetching tags fixes today's symptom; asserting that
+    #      nothing skipped is what stops the silent-skip failure mode returning through
+    #      some other change, which is the actual defect in #34.
     #
-    # The real fix is `fetch-tags`/`fetch-depth: 0` in
-    # jebel-quant/rhiza/.github/workflows/rhiza_ci.yml, which is upstream and not editable
-    # here. This job is the local counterpart: it runs the same two modules against this
-    # repository with the history they need. Delete it once upstream fetches tags.
+    # test_cargo_toml and test_go_module are absent deliberately: there is no Cargo.toml or
+    # go.mod here for them to judge, and a check with no subject skips, which reads as a
+    # pass — the same #34 failure mode, one level up.
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The entire point. `fetch-tags` alone is not enough on a shallow clone — the
-          # tagged commits have to be present for `git rev-parse <tag>^{commit}` and
-          # `git branch --contains` to answer, and test_release_tags skips on both.
+          # `fetch-tags` alone is not enough on a shallow clone — the tagged commits have
+          # to be present for `git rev-parse <tag>^{commit}` and `git branch --contains`
+          # to answer, and test_release_tags skips on both.
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      # `-rs` prints skip reasons, which is what the guard below reads. Only these two
-      # modules: they are the tag-dependent ones, and locally with tags present they are
-      # 28 passed / 0 skipped, so "no skips" is a bar this repo actually meets rather than
-      # an aspiration.
+      # RHIZA_DOCTEST_FOLDERS is left unset on purpose — this project's Python *is* under
+      # `src`, which is the variable's own fallback, so setting it would add a second place
+      # to keep the folder name correct.
       #
-      # The guard matters as much as the checkout. Fetching tags fixes the symptom today;
-      # asserting that nothing skipped is what stops the silent-skip failure mode coming
-      # back through some other change, which is the actual defect in #34.
-      - name: Run the tag-dependent checks against this repository
+      # `-rs` prints skip reasons, which is what the guard reads. With tags present these
+      # five modules are 34 passed / 0 skipped, so "no skips" is a bar this repo actually
+      # meets rather than an aspiration.
+      - name: Run this package's checks against this repository
         run: |
           set -o pipefail
-          uv run --group test pytest -q -rs --pyargs \
-            pytest_rhiza.checks.test_release_tags \
-            pytest_rhiza.checks.test_pyproject | tee checks.log
+          uv run --group test pytest -ra -rs --pyargs \
+            pytest_rhiza.checks.test_readme \
+            pytest_rhiza.checks.test_readme_validation \
+            pytest_rhiza.checks.test_pyproject \
+            pytest_rhiza.checks.test_docstrings \
+            pytest_rhiza.checks.test_release_tags | tee checks.log
           if grep -q "skipped" checks.log; then
-            echo "::error::A tag-dependent check skipped. A skipped assertion reads as a pass, which is the defect this job exists to prevent (#34)."
+            echo "::error::A self-applied check skipped. A skipped assertion reads as a pass, which is the defect this guard exists to prevent (#34)."
             exit 1
           fi
+
+  # One required check for branch protection, rather than a list that has to be edited
+  # every time a job is added or renamed. `always()` plus an explicit result scan is the
+  # form that actually fails on a skipped or cancelled dependency; a bare `needs:` would
+  # let a skipped job pass as success.
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs:
+      - lint
+      - test
+      - typecheck
+      - docs-coverage
+      - deptry
+      - security
+      - audit
+      - lowest-deps
+      - license
+      - rhiza-test
+
+    steps:
+      - name: Assert every gate succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "gate results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required gate did not succeed (saw '$result')."
+              exit 1
+            fi
+          done
+          echo "All gates succeeded."
