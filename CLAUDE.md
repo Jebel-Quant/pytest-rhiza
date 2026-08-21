@@ -53,8 +53,10 @@ the README fence; the runner picks it up with no change.
 Two gates have side effects worth knowing before running them:
 
 - `lowest-deps` (`uv sync --resolution lowest-direct`) **rewrites `uv.lock`'s resolution in
-  your working tree**. Run plain `uv sync` afterwards to get back. The runner excludes it
-  from a bare run for that reason; naming it (or `--all`) is the opt-in.
+  your working tree**. The runner excludes it from a bare run for that reason; naming it (or
+  `--all`) is the opt-in. Since #71 it also re-syncs the lock in a `finally` once the gate
+  finishes, so a red or interrupted run recovers too — run the bare command line by hand and
+  the manual `uv sync` is still yours to remember.
 - `rhiza-test` runs this package's own checks against this repository. CI wraps the pytest
   call in a `grep` guard that fails the job if any check *skips*, and checks out with
   `fetch-depth: 0` so the tag-comparing assertions have tags to compare (#34). The README's
@@ -130,6 +132,11 @@ it in full):
 Consequence: coverage of `src/pytest_rhiza/checks/` comes entirely from those subprocesses,
 which is why `[tool.coverage.run] patch = ["subprocess"]` is set. Without it that whole
 directory reads as 0% however well tested it is.
+
+The floor covers **`scripts` as well as `src`** (#69). Nothing under `scripts/` ships in the
+wheel, so it was outside the measurement at first — but `gates.py` is what decides whether
+every other gate is green, and being typed and interrogated with no coverage behind it left
+its whole selection path unreached.
 
 Most subjects need to be a git repo with a tag — the version checks compare a manifest
 against tag state, and with no repository they *skip*, which reads as a pass. That failure
