@@ -203,10 +203,10 @@ what it is.
 | --- | --- |
 | `lint` | `uvx prek run --all-files` — every hook in `.pre-commit-config.yaml` |
 | `test` | the suite on 3 OSes × 4 Python versions, at a 90% coverage floor |
-| `typecheck` | `ty check src` |
-| `docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
+| `typecheck` | `ty check src scripts`, then `mypy --strict src scripts` |
+| `docs-coverage` | interrogate over `src`, `tests` and `scripts`, at a 100% floor |
 | `deptry` | declared-vs-imported deps, against `[tool.deptry]` in `pyproject.toml` |
-| `security` | bandit over `src`, medium-and-above |
+| `security` | bandit over `src` and `scripts`, medium-and-above |
 | `audit` | `pip-audit` over the locked environment |
 | `lowest-deps` | the suite against `--resolution lowest-direct`, testing the version floors |
 | `license` | refuses strong copyleft in the runtime closure |
@@ -219,13 +219,14 @@ what it is.
 # lint
 uvx prek run --all-files --show-diff-on-failure
 # typecheck
-uv run --with ty ty check src
+uv run --with ty ty check src scripts
+uv run --with mypy mypy --strict src scripts
 # docs-coverage
-uv run --with interrogate interrogate -vv --fail-under 100 --ignore-init-method --ignore-magic src tests
+uv run --with interrogate interrogate -vv --fail-under 100 --ignore-init-method --ignore-magic src tests scripts
 # deptry
 uvx deptry src
 # security
-uvx bandit -r src -ll -q
+uvx bandit -r src scripts -ll -q
 # audit
 uvx pip-audit
 # license
@@ -255,6 +256,28 @@ run `uv sync` afterwards to get back. And `rhiza-test`'s line stops at the pytes
 invocation: CI wraps it in a `grep` guard that fails the job if any check *skips* (#34),
 which is a property of the pipeline rather than of the gate.
 
+#### Running all of them
+
+```bash
+python scripts/gates.py              # every gate except the destructive ones
+python scripts/gates.py lint test    # just these
+python scripts/gates.py --list       # what is defined, without running anything
+```
+
+`scripts/gates.py` **runs the block above rather than restating it** (#66), which is what
+keeps it from being the second home #52 removed: it parses that fence and executes what it
+finds, so `ci.yml` is still the only place a gate command line is written. The runner and
+`tests/test_readme_gates.py` share the parser deliberately — if the runner read this file
+its own way, that test would pin a parse of the README that nothing actually executes.
+
+It also closes the two gaps above, which is most of why it is worth having. `lowest-deps` is
+excluded from a bare run and needs naming (or `--all`), because rewriting your lockfile
+should be something you asked for; and `rhiza-test` carries the `grep` guard, so a local
+pass means what CI's does instead of going green on `32 passed, 2 skipped`.
+
+Every selected gate runs even after one fails, and the summary at the end is the whole
+picture — the same reason `ci-gate` aggregates rather than the jobs depending on each other.
+
 `weekly.yml` carries the two that are too slow or noisy for every push: a fresh
 dependency resolution, and a link check over this file.
 
@@ -277,10 +300,17 @@ Publishing validates the exact workflow path. The `rhiza_codeql.yml` and
 Scorecard workflows, a pinned edge to keep current for scanning this repository does not
 depend on.
 
-The cost of dropping the Makefile is real and worth stating: **no gate has a local entry
-point any more** (#49, #32). That was the call made in #52 — a Makefile in a repo whose
-ecosystem retired make as an interface is a second thing to keep correct — but it does mean
-the only way to run a gate by hand is to read its command line out of `ci.yml`.
+The cost of dropping the Makefile was real and was stated plainly here for three releases:
+**no gate had a local entry point at all** (#49, #32). That was the call made in #52 — a
+Makefile in a repo whose ecosystem retired make as an interface is a second thing to keep
+correct — and it meant the only way to run a gate by hand was to read its command line out
+of `ci.yml`, which #58 improved to a copy-paste out of this file.
+
+`scripts/gates.py` closes it (#66) without giving any threshold a second home, because it
+holds no recipes: it executes the fence above, which `tests/test_readme_gates.py` already
+pins to `ci.yml`. That is the distinction #52 was actually protecting — not "no runner", but
+no *second copy* of what to run. There is still no `Makefile`, and nothing here invokes
+`rhiza-task`.
 
 ### The checks, self-applied
 

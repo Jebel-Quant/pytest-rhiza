@@ -19,7 +19,9 @@ distribution is that home.
 """
 
 import difflib
+import logging
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -27,7 +29,7 @@ from pytest_rhiza._fences import CODE_BLOCK, RESULT, SKIP_FLAG, should_skip
 from pytest_rhiza._process import execute_timeout, run
 
 
-def _mismatch(code_blocks, result_blocks, expected, actual):
+def _mismatch(code_blocks: list[str], result_blocks: list[str], expected: str, actual: str) -> str:
     """Explain an output mismatch, as the message for the assertion that found it (#46).
 
     The assertion this serves used to carry no message at all, which mattered more here
@@ -64,7 +66,7 @@ def _mismatch(code_blocks, result_blocks, expected, actual):
     )
 
 
-def test_readme_runs(logger, root):
+def test_readme_runs(logger: logging.Logger, root: Path) -> None:
     """Execute README code blocks and compare output to documented results."""
     readme = root / "README.md"
     logger.info("Reading README from %s", readme)
@@ -123,7 +125,7 @@ def test_readme_runs(logger, root):
 class TestReadmeTestEdgeCases:
     """Edge cases for README code block testing."""
 
-    def test_readme_code_is_syntactically_valid(self, root):
+    def test_readme_code_is_syntactically_valid(self, root: Path) -> None:
         """Python code blocks in README should be syntactically valid (skipped blocks are excluded)."""
         readme = root / "README.md"
         content = readme.read_text(encoding="utf-8")

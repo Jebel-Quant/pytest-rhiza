@@ -48,12 +48,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-README = ROOT / "README.md"
-CI = ROOT / ".github" / "workflows" / "ci.yml"
+from scripts.gates import documented_gates
 
-# The fence under "Running one by hand": `# <gate>` lines, each followed by its command(s).
-_FENCE = re.compile(r"#### Running one by hand\n+```bash\n(.*?)```", re.DOTALL)
+ROOT = Path(__file__).resolve().parents[1]
+CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 # A job key: two-space indent, no value. Matched only inside the `jobs:` block, because
 # `on:`'s `push:`/`pull_request:` have the same shape one level up.
@@ -221,28 +219,16 @@ def _ci_jobs() -> dict[str, list[list[str]]]:
 def _documented() -> dict[str, list[str]]:
     """Return each gate documented in the README mapped to its command lines.
 
+    Delegates to :func:`scripts.gates.documented_gates` rather than parsing the fence
+    again, and that is load-bearing rather than tidiness (#66). ``scripts/gates.py``
+    *executes* this block; if it read the README its own way, everything asserted below
+    would pin a parse of the README that nothing actually runs. One parser means the
+    equality proven here — README equals ``ci.yml`` — transfers to the runner.
+
     Returns:
         Gate name to the command lines listed under its ``# <gate>`` comment, in order.
     """
-    fence = _FENCE.search(README.read_text(encoding="utf-8"))
-    assert fence is not None, (
-        "README.md has no '#### Running one by hand' bash fence. It is the local entry "
-        "point for every gate (#58); if it moved or was renamed, update this test — it is "
-        "the only thing keeping those commands in step with ci.yml."
-    )
-
-    commands: dict[str, list[str]] = {}
-    gate: str | None = None
-    for line in fence.group(1).splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            gate = stripped.lstrip("#").strip()
-            commands.setdefault(gate, [])
-        elif gate is not None:
-            commands[gate].append(stripped)
-    return commands
+    return documented_gates()
 
 
 def _reduced_blocks(gate: str, jobs: dict[str, list[list[str]]]) -> list[list[str]]:
