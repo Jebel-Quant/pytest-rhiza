@@ -189,22 +189,39 @@ uv sync
 uv run pytest
 ```
 
-`make help` lists the gates. Every one of them is what CI runs, so a green local sweep
-means a green pipeline:
+`make help` lists the gates:
 
 | target | what it runs |
 | --- | --- |
 | `make lint` | all pre-commit hooks, via prek |
 | `make typecheck` | `ty check src` |
 | `make docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
+| `make deptry` | deptry over `src`, against `[tool.deptry]` in `pyproject.toml` |
 | `make security` | bandit over `src` |
 | `make test` | the suite, with the 90% coverage gate |
 | `make rhiza-test` | the checks this package ships, against this repository |
 
+Every one of those mirrors a CI job. **The converse does not hold, and this file used to
+claim it did** (#50): a green local sweep does *not* mean a green pipeline, because four
+gates run in CI with no local entry point at all.
+
+| CI-only gate | where | why it has no target |
+| --- | --- | --- |
+| `pip-audit` | `audit`, in `ci.yml` | resolves the *locked* environment against the advisory database, so it goes red on a new CVE with the source unchanged |
+| lowest-direct deps | `lowest-deps`, upstream | re-resolves with `--resolution lowest-direct` and re-runs the suite, which needs its own env rather than yours |
+| license compliance | `license`, upstream | scans the resolved dependency tree's licences |
+| CodeQL, Scorecard | their own workflows | whole-repo scanners with no meaningful local form |
+
+So the sweep predicts everything that depends on *this* source, and nothing that depends
+on what the lockfile resolves to on a given day. Those are the two failure modes to expect
+from a green local run, and neither is reachable by adding a target.
+
 `typecheck`, `docs-coverage` and `security` take their flags from the reusable workflow
 `jebel-quant/rhiza/.github/workflows/rhiza_ci.yml`, so the recipes mirror those jobs
-rather than setting a threshold of their own — see the comment above them in the
-`Makefile`.
+rather than setting a threshold of their own. `deptry` is the exception: its configuration
+lives here, in `[tool.deptry]`, and it names the tool rather than `rhiza-task deps` so a
+local gate on this package does not pull in a released copy of this package — see the
+comments above them in the `Makefile`.
 
 The checks run against this repository too — it is a Python project with a README, a
 `pyproject.toml` and a release config, so it is a valid subject for its own assertions.
@@ -216,9 +233,15 @@ make rhiza-test
 
 It names the five modules this project is a subject for, and deliberately not
 `test_cargo_toml` or `test_go_module`: there is no `Cargo.toml` or `go.mod` here for them
-to judge, and a check with no subject skips, which reads as a pass (#34). The five come to
-the same 34 assertions the `(RHIZA) CI` job runs, so a green local sweep means a green
-pipeline here as well.
+to judge, and a check with no subject skips, which reads as a pass (#34).
+
+The five come to 34 assertions, and locally all 34 *run* — which is the part worth
+checking, because the upstream `Rhiza repository checks` job reports `32 passed, 2
+skipped`: its checkout fetches no tags, so the two assertions comparing
+`[project].version` against the newest `vX.Y.Z` have nothing to compare and skip. That is
+the one place where local is *stronger* than that job rather than weaker, and it is why
+`ci.yml` carries a `self-check` job that re-runs those two with `fetch-depth: 0` and fails
+if anything skips at all (#34).
 
 ## License
 

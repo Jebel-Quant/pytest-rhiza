@@ -28,5 +28,5 @@ on:
 
 jobs:
   weekly:
-    uses: jebel-quant/rhiza/.github/workflows/rhiza_weekly.yml@v1.4.2
+    uses: jebel-quant/rhiza/.github/workflows/rhiza_weekly.yml@31e1a11237419f746770c5339f8aa468fd1c0deb # v1.4.2
     secrets: inherit

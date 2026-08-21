@@ -10,8 +10,22 @@ name: CI
 # Separately, `astral-sh/setup-uv` could not have used a floating major in any case: it
 # publishes no `v8`, `v9` or `v10` alias tag, so `@v10` does not resolve at all.
 #
-# `.github/workflows/rhiza_*.yml` are upstream files from jebel-quant/rhiza, so pinning
-# them belongs upstream and is filed as Jebel-Quant/rhiza#1577 rather than patched here.
+# `.github/workflows/rhiza_*.yml` are upstream files from jebel-quant/rhiza, and the same
+# rule now applies to them — but only to the half this repository actually decides (#51).
+#
+# The four stubs (rhiza_ci, rhiza_codeql, rhiza_scorecard, rhiza_weekly) contain nothing but
+# a `uses:` line, and that line is a version selector written *here*. Upstream cannot pin it
+# on our behalf: it is the choice of which upstream commit runs. So those four are pinned to
+# the commit v1.4.2 dereferences to, trailing-commented with the tag, exactly as above. Note
+# v1.4.2 is an *annotated* tag, so `refs/tags/v1.4.2` names a tag object
+# (371fa308f5d6e3772aee99aad5ee9da2713089cb) distinct from the commit; the commit is what is
+# pinned, and both resolve to the same workflow blob.
+#
+# rhiza_release.yml is the exception, and deliberately unpinned. It is synced verbatim rather
+# than as a stub because PyPI Trusted Publishing validates the exact workflow path — see its
+# own header — so its third-party `uses:` lines are upstream's text, not ours. SHA-pinning
+# them here would fork a file whose whole point is being byte-identical to upstream, and the
+# next re-sync would silently revert it. That half stays Jebel-Quant/rhiza#1577.
 
 on:
   push:

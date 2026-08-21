@@ -7,7 +7,7 @@
 
 PREK := uvx prek
 
-.PHONY: help lint install-hooks typecheck docs-coverage security test rhiza-test clean
+.PHONY: help lint install-hooks typecheck docs-coverage deptry security test rhiza-test clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -19,7 +19,7 @@ lint: ## Run all pre-commit hooks over every file
 install-hooks: ## Install the git pre-commit hook
 	$(PREK) install
 
-# The three gates below run in CI through the reusable workflow
+# The four gates below run in CI through the reusable workflow
 # `jebel-quant/rhiza/.github/workflows/rhiza_ci.yml`, which means their flags are owned
 # upstream rather than by this repo. They had no local entry point at all, so a
 # contributor could not reproduce a red CI job before pushing — the same hazard the
@@ -28,7 +28,7 @@ install-hooks: ## Install the git pre-commit hook
 # Each recipe is the CI job's command line copied verbatim, and that is the point: the
 # thresholds are not re-decided here. Read them off a run with
 # `gh run view <id> --log | grep -E '^\$'` if they ever need re-checking, and keep the
-# two in step.
+# two in step. `deptry` is the one deliberate exception, for the reasons above it.
 #
 # Deliberately *not* mirrored into `[tool.interrogate]` / `[tool.mypy]` in pyproject.toml.
 # A committed table would be a second home for a threshold whose first home is upstream's
@@ -39,6 +39,25 @@ typecheck: ## Type-check src (mirrors the rhiza_ci "Type checking" job)
 
 docs-coverage: ## Docstring coverage (mirrors the rhiza_ci "docs-coverage" job)
 	uv run --with interrogate interrogate -vv --fail-under 100 --ignore-init-method --ignore-magic src tests
+
+# The fourth gate, and the one recipe that is deliberately *not* the CI command line.
+# Upstream runs `uvx rhiza-task@0.3.1 deps` (the `deptry` job in rhiza_ci.yml); this names
+# deptry directly, for two reasons.
+#
+# There is no threshold to mirror. deptry's entire configuration is `[tool.deptry]` in this
+# repository's pyproject.toml — the `python-dotenv` → `dotenv` module map, and the DEP002
+# ignore for the entry-point-only pytest-timeout. Nothing about this gate is owned
+# upstream, so the paragraph above does not apply to it, and there is no number here that
+# could drift from one.
+#
+# And routing it through `rhiza-task` would close a loop. rhiza-task depends on
+# pytest-rhiza, so a *local* gate on this package invoked through the front door would
+# fetch a released copy of this very package in order to check the copy being edited. The
+# three recipes above already avoid that by naming the underlying tool (`ty`, `interrogate`,
+# `bandit`) rather than `rhiza-task <gate>`; this one does the same, and it is the gate
+# where the reason is load-bearing rather than incidental.
+deptry: ## Unused/missing dependency analysis (mirrors the rhiza_ci "deptry" job)
+	uvx deptry src
 
 # bandit only, matching the CI job. The dependency half of `security` is pip-audit, which
 # this repo runs in its own ci.yml `audit` job rather than here.
