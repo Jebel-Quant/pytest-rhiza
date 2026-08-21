@@ -136,9 +136,21 @@ line-ending = "auto"
 # directory — they ship inside the package so they can be installed — so the glob above
 # does not reach them. Same allowances, same reasons.
 #
-# NOTE: this repo is not yet rhiza-managed. Once it is, ruff.toml becomes template-owned
-# and this entry has to either land upstream or be held here by an `exclude:` entry in
-# .rhiza/template.yml. Recorded in README.md under "still to decide".
+# STILL TO DECIDE, and recorded here rather than in README.md, because this is the file the
+# decision is about and a pointer to a prose section is one more thing to keep correct.
+#
+# This repo is not yet rhiza-managed. Once it is, ruff.toml becomes template-owned, and this
+# entry — which exists only because *this* package ships test code inside its wheel — cannot
+# simply stay. Two ways out, neither taken yet:
+#
+#   1. Land the glob upstream in jebel-quant/rhiza. Cheap to sync, but it puts a pattern
+#      matching one package's private layout into every managed repo's lint config.
+#   2. Hold ruff.toml locally, via an `exclude:` entry in .rhiza/template.yml. Keeps the
+#      oddity where it belongs, at the cost of opting this repo out of template lint updates.
+#
+# (2) is the better fit for a one-package quirk, but it is a real cost and the choice should
+# be made when the repo is actually adopted, against whatever the template's lint config
+# looks like then — not pre-committed here.
 "src/pytest_rhiza/checks/*.py" = [
     "ANN",   # tests prioritize readability and fixtures over strict annotation coverage
     "S101",  # assert is the test idiom
