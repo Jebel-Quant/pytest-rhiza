@@ -19,9 +19,11 @@ them varies per project. Distributing them by file copy costs every consumer rep
   against itself
 
 All five go away when the checks are a dependency. The dependency list is deliberately
-four small packages — folding them into `rhiza` would pull `jinja2`, `typer`, `rich` and
+three small packages — folding them into `rhiza` would pull `jinja2`, `typer`, `rich` and
 `loguru` into every test environment, and into `rhiza-tools` would add `pandas` and
-`plotly`.
+`plotly`. It was four until #53 traded python-dotenv for ten lines of stdlib parsing: it
+bought one lookup on a rung that only repos still on rhiza v1.3 reach, and this package is
+installed in every rhiza-managed repo's test environment.
 
 ## Install
 
@@ -29,7 +31,8 @@ four small packages — folding them into `rhiza` would pull `jinja2`, `typer`, 
 uv add --dev pytest-rhiza
 ```
 
-Or, the way `make rhiza-test` does it, without touching the project's dependencies:
+Or, the way a consumer's `rhiza-test` gate does it, without touching the project's
+dependencies:
 
 ```bash
 uv run --with pytest-rhiza pytest --pyargs pytest_rhiza.checks.test_readme
@@ -62,8 +65,9 @@ explicitly with `--pyargs`. One module per file the template used to sync, names
 | `test_go_module` | `go-core` | `.rhiza/tests/test_go_module.py` |
 
 That table is not prose. The fence below enumerates what the installed package actually
-ships, and `make rhiza-test` executes it against this README — so adding or removing a
-check without updating the list above turns this block red:
+ships, and the `rhiza-test` job in `.github/workflows/ci.yml` executes it against this
+README — so adding or removing a check without updating the list above turns that job
+red:
 
 ```python
 import pkgutil
@@ -189,36 +193,74 @@ uv sync
 uv run pytest
 ```
 
-`make help` lists the gates. Every one of them is what CI runs, so a green local sweep
-means a green pipeline:
+### The gates, and where they are defined
 
-| target | what it runs |
+**There is no Makefile, and no `.rhiza/` layer. `.github/workflows/ci.yml` is the single
+home for every gate command line** (#52). To reproduce one, copy its line out of that
+file — each job is a single command with a comment saying why its threshold is what it is.
+
+| gate | what it runs |
 | --- | --- |
-| `make lint` | all pre-commit hooks, via prek |
-| `make typecheck` | `ty check src` |
-| `make docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
-| `make security` | bandit over `src` |
-| `make test` | the suite, with the 90% coverage gate |
-| `make rhiza-test` | the checks this package ships, against this repository |
+| `lint` | `uvx prek run --all-files` — every hook in `.pre-commit-config.yaml` |
+| `test` | the suite on 3 OSes × 4 Python versions, at a 90% coverage floor |
+| `typecheck` | `ty check src` |
+| `docs-coverage` | interrogate over `src` and `tests`, at a 100% floor |
+| `deptry` | declared-vs-imported deps, against `[tool.deptry]` in `pyproject.toml` |
+| `security` | bandit over `src`, medium-and-above |
+| `audit` | `pip-audit` over the locked environment |
+| `lowest-deps` | the suite against `--resolution lowest-direct`, testing the version floors |
+| `license` | refuses strong copyleft in the runtime closure |
+| `rhiza-test` | the checks this package ships, against this repository, with tags |
+| `ci-gate` | one required check that fails unless every job above succeeded |
 
-`typecheck`, `docs-coverage` and `security` take their flags from the reusable workflow
-`jebel-quant/rhiza/.github/workflows/rhiza_ci.yml`, so the recipes mirror those jobs
-rather than setting a threshold of their own — see the comment above them in the
-`Makefile`.
+`weekly.yml` carries the two that are too slow or noisy for every push: a fresh
+dependency resolution, and a link check over this file.
+
+Day to day, `uv sync` then `uv run pytest` is the loop; `uvx prek install` wires the hooks
+so the formatting gate cannot surprise you.
+
+### Why no Makefile, and why nothing calls jebel-quant/rhiza
+
+This repository used to run rhiza's reusable CI (`rhiza_ci.yml`) like any consumer, and
+mirrored a subset of its gates into a Makefile so a contributor could reproduce a red job.
+Both layers are gone, because the dependency direction made the first one a cycle:
+**`jebel-quant/rhiza` pins pytest-rhiza as a dependency** — its `pyproject.toml` carries
+`pytest-rhiza @ git+…`— so this repository calling rhiza's CI meant rhiza's workflow
+running the gates that judge the package rhiza depends on. Every other consumer gets a
+one-way edge; this one got a loop.
+
+Two rhiza workflows stay, and they are not part of that loop: `rhiza_codeql.yml` and
+`rhiza_scorecard.yml` reference neither `rhiza-task` nor `pytest-rhiza` — they are
+`github/codeql-action` and `ossf/scorecard-action` runs over the source. `rhiza_release.yml`
+also stays, synced verbatim, because PyPI Trusted Publishing validates the exact workflow
+path.
+
+The cost of dropping the Makefile is real and worth stating: **no gate has a local entry
+point any more** (#49, #32). That was the call made in #52 — a Makefile in a repo whose
+ecosystem retired make as an interface is a second thing to keep correct — but it does mean
+the only way to run a gate by hand is to read its command line out of `ci.yml`.
+
+### The checks, self-applied
 
 The checks run against this repository too — it is a Python project with a README, a
 `pyproject.toml` and a release config, so it is a valid subject for its own assertions.
-That is what `make rhiza-test` is:
+That is what the `rhiza-test` job is:
 
 ```bash
-make rhiza-test
+uv run --group test pytest -ra --pyargs pytest_rhiza.checks.test_readme
 ```
 
-It names the five modules this project is a subject for, and deliberately not
+The job names the five modules this project is a subject for, and deliberately not
 `test_cargo_toml` or `test_go_module`: there is no `Cargo.toml` or `go.mod` here for them
-to judge, and a check with no subject skips, which reads as a pass (#34). The five come to
-the same 34 assertions the `(RHIZA) CI` job runs, so a green local sweep means a green
-pipeline here as well.
+to judge, and a check with no subject skips, which reads as a pass (#34).
+
+The five come to 34 assertions, and locally all 34 *run* — which is the part worth
+checking, because the upstream `Rhiza repository checks` job reports `32 passed, 2
+skipped`: its checkout fetches no tags, so the two assertions comparing
+`[project].version` against the newest `vX.Y.Z` have nothing to compare and skip. That is
+the one place where local is *stronger* than that job rather than weaker, and it is why
+`ci.yml` carries a `self-check` job that re-runs those two with `fetch-depth: 0` and fails
+if anything skips at all (#34).
 
 ## License
 

@@ -17,11 +17,15 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-# Deliberately four small runtime dependencies and no more. These are exactly what
-# `make rhiza-test` provisions by hand today (`--with pytest --with pytest-timeout
-# --with python-dotenv --with packaging`), which is the argument for a dedicated
-# distribution: folding the checks into `rhiza` would drag jinja2, typer and rich into
-# every test environment, and into `rhiza-tools` would add pandas and plotly.
+# Deliberately three small runtime dependencies and no more, which is the argument for a
+# dedicated distribution: folding the checks into `rhiza` would drag jinja2, typer and rich
+# into every test environment, and into `rhiza-tools` would add pandas and plotly.
+#
+# It was four until #53. python-dotenv bought exactly one lookup — `SOURCE_FOLDER` out of a
+# `.rhiza/.env`, on a rung kept only for repos still on rhiza v1.3 — and
+# `checks/test_docstrings._read_rhiza_env` now does that with the stdlib. A dependency in
+# every rhiza-managed repo's test environment is a steep price for a legacy key, and this
+# package is installed in all of them.
 #
 # The pytest floor is 8.1, not 8.0, and the reason is specific to how this package is
 # consumed. `--pyargs` is the whole interface: the checks live in site-packages and are
@@ -40,7 +44,6 @@ classifiers = [
 dependencies = [
     "pytest>=8.1",
     "pytest-timeout>=2.3",
-    "python-dotenv>=1.0",
     "packaging>=24.0",
 ]
 
@@ -64,18 +67,19 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_rhiza"]
 
-# deptry compares *declared* dependencies against *imported* ones, which mis-reads two of
-# the four runtime deps. Both entries below are mappings, not suppressions of a real gap.
-[tool.deptry.package_module_name_map]
-# The distribution is `python-dotenv`; the module it installs is `dotenv`. Without this
-# deptry infers `python_dotenv`, then reports the declared package as unused *and* the
-# import as undeclared — the same finding twice, from one wrong guess.
-python-dotenv = ["dotenv"]
-
+# deptry compares *declared* dependencies against *imported* ones, which mis-reads one of
+# the three runtime deps — not because the dependency is unused, but because it is never
+# imported at all.
+#
+# A `[tool.deptry.package_module_name_map]` table used to sit here as well, mapping the
+# `python-dotenv` distribution to the `dotenv` module it installs. #53 dropped that
+# dependency and the table went with it: it had exactly one entry, and none of the three
+# remaining distributions installs a module under a different name.
 [tool.deptry.per_rule_ignores]
-# pytest-timeout is consumed through its own pytest11 entry point and is never imported,
-# so deptry cannot see the use. It is declared for the same reason the block above lists
-# it: a consumer installing this package must get the plugin the checks run under.
+# pytest-timeout is consumed through its own pytest11 entry point and is never imported, so
+# deptry cannot see the use at all. It is declared anyway, and has to be: a consumer
+# installing this package must get the plugin the checks run under, since the bound on a
+# hanging check comes from it.
 DEP002 = ["pytest-timeout"]
 
 # bump-my-version reads [project].version natively; /rhiza:release owns the commit and

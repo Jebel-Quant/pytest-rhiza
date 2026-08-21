@@ -103,6 +103,31 @@ class TestDiscoveryScope:
         assert result.returncode == 0, result.stdout + result.stderr
         assert "1 passed" in result.stdout, result.stdout
 
+    def test_a_messy_env_file_is_parsed_rather_than_raised_on(self, subject: Callable[..., Subject]) -> None:
+        """The legacy file's whole grammar, including the parts that do not parse.
+
+        #53 replaced ``dotenv_values`` with a stdlib parser, so the shapes python-dotenv
+        used to absorb are now this repository's problem: a comment, a blank line, an
+        ``export`` prefix, a quoted value, and — the two that matter — a line with no ``=``
+        and a line with no name. Both are skipped rather than raised on, and the lines
+        around them are still read, which is what this asserts by finding ``lib``.
+
+        A stray line in a file the current toolchain no longer writes must not be able to
+        fail every check in the repository.
+        """
+        repo = subject(
+            {
+                ".rhiza/.env": ('# where the python lives\n\nexport SOURCE_FOLDER="lib"\nBROKEN\n=novalue\n'),
+                "lib/demopkg/__init__.py": PASSING_PACKAGE,
+            },
+            tag="v1.2.3",
+        )
+
+        result = repo.run("test_docstrings")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 passed" in result.stdout, result.stdout
+
     def test_an_env_file_pointing_at_nothing_skips_naming_the_folder(self, subject: Callable[..., Subject]) -> None:
         """The skip reason has to name the configured folder, or it is unactionable."""
         repo = subject({".rhiza/.env": "SOURCE_FOLDER=nowhere\n"}, tag="v1.2.3")
@@ -112,7 +137,7 @@ class TestDiscoveryScope:
         assert "No doctest folder found (looked for: nowhere)" in result.stdout, result.stdout
 
     def test_the_environment_variable_overrides_the_env_file(self, subject: Callable[..., Subject]) -> None:
-        """``make rhiza-test`` sets ``RHIZA_DOCTEST_FOLDERS`` from the accumulated list.
+        """A wrapper around the gate sets ``RHIZA_DOCTEST_FOLDERS`` to its source folder.
 
         Also the multi-folder and duplicate cases: the value is whitespace-separated and
         ``src`` appears twice, which must not run the same folder's examples twice.
@@ -233,14 +258,20 @@ class TestFailureModes:
     ) -> None:
         """The folder under test wins over a same-named package already imported.
 
-        ``dotenv`` is the sharpest case available: the check module imports it itself, so
-        it is guaranteed to be in ``sys.modules`` before the walk starts. Without the fix
-        ``import_module("dotenv")`` returns the *installed* python-dotenv and the subject's
-        own package is never opened — the gate reports a pass having measured somebody
-        else's code, which is the failure mode that hid this for three releases of
-        pytest-rhiza's own ``_bumpversion`` module.
+        ``pluggy`` is the sharpest case available: pytest cannot start without importing
+        it, so it is guaranteed to be in ``sys.modules`` before the walk starts, and it is
+        guaranteed installed because pytest depends on it. Without the fix
+        ``import_module("pluggy")`` returns the *installed* pluggy and the subject's own
+        package is never opened — the gate reports a pass having measured somebody else's
+        code, which is the failure mode that hid this for three releases of pytest-rhiza's
+        own ``_bumpversion`` module.
+
+        This was ``dotenv`` until #53 dropped python-dotenv as a dependency. The victim has
+        to be something the *running interpreter* has already imported, so once the check
+        stopped importing dotenv this test would have passed without exercising eviction at
+        all — green, and measuring nothing, which is the bug it exists to catch.
         """
-        repo = subject({"src/dotenv/__init__.py": FAILING_MODULE}, tag="v1.2.3")
+        repo = subject({"src/pluggy/__init__.py": FAILING_MODULE}, tag="v1.2.3")
 
         result = repo.run("test_docstrings")
 

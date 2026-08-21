@@ -1,0 +1,71 @@
+name: Weekly
+
+# Checks that are too slow or noisy for every push, which is why they were weekly upstream
+# and stay weekly here. This file replaces the `rhiza_weekly.yml` stub, dropped in #52: that
+# stub ran its gates through `rhiza-task`, and its `gitlab-docker` job invoked
+# `make gitlab-docker-test` — a mother-repo-only target this repository never had — with no
+# `if:` guard, so it was a red job waiting for its first Monday.
+#
+# Third-party actions are SHA-pinned with the version in a trailing comment; see the header
+# of ci.yml for why a tag is not good enough.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"  # Every Monday at 08:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dep-compat:
+    name: Test against freshly resolved dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # The complement of ci.yml's `lowest-deps`: that one pins the floors, this one ignores
+      # the lockfile entirely and takes the newest resolution. It is how a newly-released
+      # pytest or packaging that breaks this package surfaces on a Monday rather than inside
+      # somebody's dependabot PR — which matters because pytest-rhiza sits in every
+      # rhiza-managed repo's test environment, so a break here is a break everywhere.
+      #
+      # `--upgrade` rather than `--frozen`: resolving fresh is the entire point, so this job
+      # deliberately does not use uv.lock.
+      - name: Resolve fresh and run the suite
+        run: uv run --group test --upgrade --no-locked pytest -ra
+
+  link-check:
+    name: Check links in README.md
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # README.md carries a lot of outbound links — the rhiza repo, the issue references, the
+      # PyPI and licence links. `markdownlint` checks that a link is well-formed; only this
+      # checks that it resolves. Kept from the dropped rhiza_weekly stub, where it was the one
+      # job with no rhiza-task involvement and therefore pure lost coverage.
+      #
+      # --no-progress keeps the log readable; the accept list tolerates the 401/403 that
+      # GitHub and PyPI return to unauthenticated HEAD requests rather than reporting them as
+      # dead links.
+      - name: Run lychee
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: >-
+            --no-progress
+            --accept 200,203,204,401,403,429
+            README.md
+          fail: true
