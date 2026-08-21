@@ -27,7 +27,6 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from packaging.version import Version
 
 from pytest_rhiza._bumpversion import (
     DISCOVERABLE_CONFIGS,
@@ -36,6 +35,7 @@ from pytest_rhiza._bumpversion import (
     legacy_config_hint,
     shadowing_configs,
 )
+from pytest_rhiza._versions import assert_declared_version_not_behind_tag
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
 _REQUIRED_PROJECT_FIELDS = ("name", "version", "description", "readme", "requires-python", "license", "authors")
@@ -298,11 +298,18 @@ class TestGitTagVersion:
     layers need it.
     """
 
-    def test_latest_tag_matches_pyproject_version(self, latest_tag: str, project: dict) -> None:
-        """The latest git tag (vX.Y.Z) must match [project].version in pyproject.toml."""
-        tag_version = str(Version(latest_tag.lstrip("v")))
-        pyproject_version = str(Version(project.get("version", "")))
-        assert tag_version == pyproject_version, (
-            f"Latest git tag {latest_tag!r} (→ {tag_version!r}) does not match "
-            f"[project].version {pyproject_version!r} in pyproject.toml"
+    def test_pyproject_version_is_not_behind_the_latest_tag(self, latest_tag: str, project: dict) -> None:
+        """[project].version must be the newest vX.Y.Z tag, or ahead of it.
+
+        Ahead is a release in flight; behind is drift. See
+        :mod:`pytest_rhiza._versions` for why this is not an equality check.
+        """
+        assert_declared_version_not_behind_tag(
+            latest_tag,
+            str(project.get("version", "")),
+            location="[project].version in pyproject.toml",
+            consequence=(
+                "bump-my-version reads [project].version natively, so the next release would "
+                "bump from a number older than what is already published."
+            ),
         )

@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from pytest_rhiza._bumpversion import SyncedBumpversionConfig
+from pytest_rhiza._versions import assert_declared_version_not_behind_tag
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
 
@@ -166,20 +167,26 @@ class TestGitTagVersion:
     ships for every language layer.
     """
 
-    def test_latest_tag_matches_cargo_version(self, latest_tag: str, package: dict) -> None:
-        """The latest git tag (vX.Y.Z) must match [package].version.
+    def test_cargo_version_is_not_behind_the_latest_tag(self, latest_tag: str, package: dict) -> None:
+        """[package].version must be the newest vX.Y.Z tag, or ahead of it.
 
         This is the invariant ``.bumpversion.toml`` relies on rather than a style
         preference. With no ``current_version`` key, bump-my-version reads the current
-        version from the newest tag and then searches Cargo.toml for it; if the two
-        disagree the next release fails with "did not find current version" — loudly,
-        but only at release time, which is the worst moment to find out.
+        version from the newest tag and then searches Cargo.toml for it; if the manifest
+        has fallen *behind* the tag the next release fails with "did not find current
+        version" — loudly, but only at release time, which is the worst moment to find
+        out. A manifest ahead of the tag is the opposite situation and is expected; see
+        :mod:`pytest_rhiza._versions`.
         """
         version = package.get("version")
         if isinstance(version, dict):
             pytest.skip("[package].version is inherited from the workspace")
-        assert latest_tag.lstrip("v") == str(version), (
-            f"Latest git tag {latest_tag!r} does not match [package].version {version!r}. "
-            f"bump-my-version derives the current version from the tag and then looks for it "
-            f"in Cargo.toml, so the next release would fail to find it."
+        assert_declared_version_not_behind_tag(
+            latest_tag,
+            str(version),
+            location="[package].version in Cargo.toml",
+            consequence=(
+                "bump-my-version derives the current version from the tag and then looks for "
+                "it in Cargo.toml, so the next release would fail to find it."
+            ),
         )

@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from pytest_rhiza._bumpversion import SyncedBumpversionConfig
+from pytest_rhiza._versions import assert_declared_version_not_behind_tag
 
 # The one place a Go module's version exists in the source tree.
 _VERSION_GO = Path("internal") / "version" / "version.go"
@@ -162,17 +163,21 @@ class TestGitTagVersion:
     ships for every language layer.
     """
 
-    def test_latest_tag_matches_the_version_constant(self, latest_tag: str, declared_version: str) -> None:
-        """The latest git tag (vX.Y.Z) must match the ``Version`` constant.
+    def test_the_version_constant_is_not_behind_the_latest_tag(self, latest_tag: str, declared_version: str) -> None:
+        """The ``Version`` constant must be the newest vX.Y.Z tag, or ahead of it.
 
-        For Go this is the definition of the version rather than a consistency check:
-        consumers resolve the module at the tag, so a constant that disagrees means a
-        built binary reports a version nobody can ``go get``. The release flow keeps
-        them in step by rewriting the constant and tagging in one commit; drift means
-        someone edited one of the two by hand.
+        For Go the tag is the definition of the version rather than a consistency
+        check: consumers resolve the module at the tag, so a constant that has fallen
+        *behind* means a built binary reports a version older than what is published.
+        A constant ahead of the newest tag is a release in flight — the bump lands by
+        pull request and the tag follows. See :mod:`pytest_rhiza._versions`.
         """
-        assert latest_tag.lstrip("v") == declared_version, (
-            f"Latest git tag {latest_tag!r} does not match the Version constant "
-            f"{declared_version!r} in {_VERSION_GO.as_posix()}. Consumers resolve the module at "
-            f"the tag, so the built binary would report a version that cannot be fetched."
+        assert_declared_version_not_behind_tag(
+            latest_tag,
+            declared_version,
+            location=f"the Version constant in {_VERSION_GO.as_posix()}",
+            consequence=(
+                "consumers resolve the module at the tag, so the built binary would report a "
+                "version older than the one that can be fetched."
+            ),
         )

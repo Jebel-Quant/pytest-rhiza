@@ -280,17 +280,31 @@ class TestBumpversionConfig:
 
 
 class TestTagAgreement:
-    """The crate version and the newest tag are one fact recorded twice."""
+    """The crate version must be the newest tag or ahead of it, never behind.
 
-    def test_a_version_disagreeing_with_the_tag_is_reported(self, subject: Callable[..., Subject]) -> None:
+    See :class:`tests.test_check_pyproject.TestTagAgreement` for why equality was wrong
+    (#62). Only a manifest that has fallen behind breaks the next bump, which reads the
+    current version from the tag and then searches Cargo.toml for it.
+    """
+
+    def test_a_version_behind_the_tag_is_reported(self, subject: Callable[..., Subject]) -> None:
         """bump-my-version reads the version from the tag and then looks for it in Cargo.toml."""
-        manifest = SOUND_CARGO.replace('version = "1.2.3"', 'version = "9.9.9"')
+        manifest = SOUND_CARGO.replace('version = "1.2.3"', 'version = "1.1.0"')
         repo = subject(_crate(**{"Cargo.toml": manifest}), tag="v1.2.3")
 
         result = repo.run("test_cargo_toml")
 
         assert result.returncode != 0
         assert "bump-my-version derives the current version from the tag" in result.stdout, result.stdout
+
+    def test_a_version_ahead_of_the_tag_is_a_release_in_flight(self, subject: Callable[..., Subject]) -> None:
+        """A crate whose bump has landed but whose tag has not is not drift."""
+        manifest = SOUND_CARGO.replace('version = "1.2.3"', 'version = "9.9.9"')
+        repo = subject(_crate(**{"Cargo.toml": manifest}), tag="v1.2.3")
+
+        result = repo.run("test_cargo_toml")
+
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_an_untagged_repository_skips_the_comparison(self, subject: Callable[..., Subject]) -> None:
         """A crate that has never released must not fail the version checks."""

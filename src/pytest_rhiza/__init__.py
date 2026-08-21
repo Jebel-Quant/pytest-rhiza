@@ -15,4 +15,4 @@ __all__ = ["__version__"]
 
 # Kept in step with [project].version by bump-my-version via the
 # [[tool.bumpversion.files]] entry in pyproject.toml.
-__version__ = "0.2.2"
+__version__ = "0.3.0"
