@@ -11,14 +11,19 @@ that equality says nothing about:
   restructured-README case, which is the one that silently breaks both consumers;
 * the selection rule, because excluding ``lowest-deps`` by default is the difference
   between a runner and a footgun: it rewrites ``uv.lock`` in the working tree;
-* the #34 skip guard, which is the one place the runner deliberately does *more* than the
-  README line it runs. CI fails ``rhiza-test`` when any check skips, because a skipped
+* the #34 skip guard, the first of three places the runner deliberately does *more* than
+  the README line it runs. CI fails ``rhiza-test`` when any check skips, because a skipped
   assertion reads as a pass; a local run that reported green on the same output would be
   worse than no runner at all.
-* the environment in :data:`scripts.gates.GATE_ENV`, which is the other place it does more
-  than the README line — the value has to reach the child process, and the ambient
-  environment has to survive being added to (#81). Whether that value is the one ``ci.yml``
-  sets is ``tests/test_readme_gates.py``'s job, not this module's.
+* the environment in :data:`scripts.gates.GATE_ENV`, the second — the value has to reach the
+  child process, and the ambient environment has to survive being added to (#81). Whether
+  that value is the one ``ci.yml`` sets is ``tests/test_readme_gates.py``'s job, not this
+  module's.
+* the untracked second pass for the gates in :data:`scripts.gates.GIT_SCOPED`, the third
+  (#89). ``prek run --all-files`` means every file *git knows about*, so this gate alone
+  could pass a module CI would reject — and a brand-new module is exactly where a missing
+  lint exemption is most likely. The rewritten line is derived from the documented one, so
+  what is tested here is the rewrite and the paths, never a second copy of the command.
 
 The guard tests drive it with a trivial subprocess that prints the tell-tale word rather
 than with a real check run, because what is under test is the reading of the output, not
@@ -28,19 +33,26 @@ pytest.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from scripts.gates import (
     DESTRUCTIVE,
     GATE_ENV,
+    GIT_SCOPED,
     GatesError,
     documented_gates,
     main,
     run_gate,
     select_gates,
+    untracked_files,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - import only for the fixture's type
+    from conftest import Subject
 
 # A fence with the two shapes that matter: a gate with one command, one with two, and a
 # destructive gate whose name is in DESTRUCTIVE.
@@ -407,3 +419,208 @@ class TestTheGateEnvironment:
         body = "import os; print('PATH=' + str('PATH' in os.environ))"
         assert run_gate("rhiza-test", [_script(body)]) is True
         assert "PATH=True" in capsys.readouterr().out
+
+
+def _argv_echo() -> str:
+    """Return a command line that prints the arguments it was given.
+
+    The untracked pass is a *rewrite* of a documented command line, so what has to be
+    asserted is the argv the child actually received — not that some second process ran.
+
+    Returns:
+        A command line for :func:`scripts.gates.run_gate`, ending in the whole-tree flag
+        that :data:`scripts.gates.GIT_SCOPED` names for `lint`.
+    """
+    body = "import sys; print('ARGV=' + ' '.join(sys.argv[1:]))"
+    return f"{_script(body)} {GIT_SCOPED['lint']}"
+
+
+def _argv_lines(out: str) -> list[str]:
+    """Return the lines the child processes printed, ignoring the runner's own echo.
+
+    :func:`scripts.gates.run_gate` prints each command line before running it, and the echo
+    of :func:`_argv_echo` contains the literal ``ARGV=`` inside its ``-c`` body — so a plain
+    substring count sees every command twice. Only the child's output *begins* a line with
+    it.
+
+    Args:
+        out: Captured stdout.
+
+    Returns:
+        One entry per child invocation, in order.
+    """
+    return [line for line in out.splitlines() if line.startswith("ARGV=")]
+
+
+@pytest.fixture
+def rooted(monkeypatch: pytest.MonkeyPatch, subject: Callable[..., Subject]) -> Callable[..., Subject]:
+    """Return a factory building a repository and repointing the runner's ``ROOT`` at it.
+
+    ``untracked_files`` asks git about :data:`scripts.gates.ROOT`, so a test needs a
+    repository it controls the untracked set of. Repointing is enough — nothing here runs a
+    documented command line, whose ``uvx`` invocations would need the real tree.
+
+    Args:
+        monkeypatch: Used to repoint the module-level ``ROOT``.
+        subject: The throwaway-repository factory from ``tests/conftest.py``.
+
+    Returns:
+        ``make(files=None, *, untracked=None) -> Subject``, where ``files`` are committed
+        and ``untracked`` are written afterwards and left uncommitted.
+    """
+
+    def make(files: dict[str, str] | None = None, *, untracked: dict[str, str] | None = None) -> Subject:
+        """Build the repository and repoint ``ROOT``.
+
+        Args:
+            files: Committed content.
+            untracked: Content written after the commit, so git neither tracks nor ignores
+                it unless a committed ``.gitignore`` says otherwise.
+
+        Returns:
+            The built subject.
+        """
+        repo = subject(files or {"seed.txt": "seed\n"})
+        if untracked:
+            repo.write(untracked)
+        monkeypatch.setattr("scripts.gates.ROOT", repo.path)
+        return repo
+
+    return make
+
+
+class TestUntrackedFiles:
+    """What the git-scoped gates cannot see, and what must stay invisible anyway."""
+
+    def test_a_file_git_neither_tracks_nor_ignores_is_listed(self, rooted: Callable[..., Subject]) -> None:
+        """The #89 case: a new module, written but not yet staged."""
+        rooted(untracked={"fresh.py": "x = 1\n"})
+
+        assert untracked_files() == ["fresh.py"]
+
+    def test_an_ignored_file_is_not_listed(self, rooted: Callable[..., Subject]) -> None:
+        """`--exclude-standard` is the escape hatch the note points contributors at.
+
+        A path in `.gitignore` is one the repository has deliberately disowned, so linting
+        it would convert the fix for a noisy scratch file into a lint failure.
+        """
+        rooted({".gitignore": "junk.txt\n"}, untracked={"junk.txt": "noise\n", "real.py": "x = 1\n"})
+
+        assert untracked_files() == ["real.py"]
+
+    def test_a_clean_tree_lists_nothing(self, rooted: Callable[..., Subject]) -> None:
+        """The normal state, and the one where this must cost no extra child process."""
+        rooted()
+
+        assert untracked_files() == []
+
+    def test_outside_a_repository_it_answers_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Unknown is "nothing extra to lint", never an error.
+
+        This pass supplements the documented command; being unable to ask git must not be
+        able to fail a gate on its own.
+        """
+        monkeypatch.setattr("scripts.gates.ROOT", tmp_path)
+
+        assert untracked_files() == []
+
+
+class TestTheUntrackedPass:
+    """The second pass: when it happens, what it runs, and when it must not happen."""
+
+    def test_the_documented_command_runs_again_scoped_to_the_untracked_paths(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """The fix for #89: `--all-files` swapped for `--files <paths>`, same command.
+
+        Derived from the documented line rather than written out here, so the runner still
+        holds no recipes (#66) — asserted by the first pass and the second differing in
+        exactly that one flag.
+        """
+        rooted(untracked={"fresh.py": "x = 1\n"})
+
+        assert run_gate("lint", [_argv_echo()]) is True
+
+        out = capfd.readouterr().out
+        assert "ARGV=--all-files" in out, out
+        assert "ARGV=--files fresh.py" in out, out
+
+    def test_it_announces_itself_and_names_the_escape_hatch(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """A second pass nobody asked for has to say why it is happening."""
+        rooted(untracked={"fresh.py": "x = 1\n"})
+
+        run_gate("lint", [_argv_echo()])
+
+        out = capfd.readouterr().out
+        assert "#89" in out
+        assert ".gitignore" in out
+
+    def test_a_failure_in_the_second_pass_fails_the_gate(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Otherwise the whole thing is decoration: the gate has to be able to go red.
+
+        The stub fails only when it is given `--files`, which is precisely the shape of the
+        defect — a command line that passes over the tracked tree and fails over the new
+        file.
+        """
+        body = "import sys; raise SystemExit('--files' in sys.argv)"
+        command = f"{_script(body)} {GIT_SCOPED['lint']}"
+        rooted(untracked={"fresh.py": "x = 1\n"})
+
+        assert run_gate("lint", [command]) is False
+
+    def test_a_clean_tree_runs_the_documented_command_once(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """No untracked files means no second pass, and no note either."""
+        rooted()
+
+        assert run_gate("lint", [_argv_echo()]) is True
+
+        out = capfd.readouterr().out
+        assert _argv_lines(out) == ["ARGV=--all-files"], out
+        assert "#89" not in out
+
+    def test_a_gate_that_is_not_git_scoped_gets_no_second_pass(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """`typecheck` walks the filesystem, so it already sees the untracked file.
+
+        Keyed by gate rather than applied to every gate carrying the flag: a second pass
+        over a gate that never needed one is wasted work, and `--all-files` means something
+        different to tools that are not prek.
+        """
+        rooted(untracked={"fresh.py": "x = 1\n"})
+
+        assert run_gate("typecheck", [_argv_echo()]) is True
+
+        out = capfd.readouterr().out
+        assert _argv_lines(out) == ["ARGV=--all-files"], out
+
+    def test_a_documented_line_without_the_flag_gets_no_second_pass(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """If the README stops scoping by git, this pass has nothing to re-scope.
+
+        Silently running the line unchanged a second time would be worse than not running
+        it: two identical passes read as coverage that is not there.
+        """
+        rooted(untracked={"fresh.py": "x = 1\n"})
+
+        assert run_gate("lint", [_script("import sys; print('ARGV=' + ' '.join(sys.argv[1:]))")]) is True
+
+        out = capfd.readouterr().out
+        assert _argv_lines(out) == ["ARGV="], out
+
+    def test_a_path_with_a_space_survives_the_round_trip(
+        self, rooted: Callable[..., Subject], capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """The rewritten line is re-split with `shlex.split`, so paths need quoting."""
+        rooted(untracked={"two words.py": "x = 1\n"})
+
+        assert run_gate("lint", [_argv_echo()]) is True
+
+        assert "ARGV=--files two words.py" in capfd.readouterr().out

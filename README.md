@@ -299,6 +299,15 @@ for you, in a `finally`, so a failing or interrupted run recovers too and even `
 `git status` clean (#71). And `rhiza-test` carries the `grep` guard, so a local pass means
 what CI's does instead of going green on `32 passed, 2 skipped`.
 
+`lint` gets a second pass over anything git neither tracks nor ignores (#89). Its
+documented command line is `prek run --all-files`, which means every file *git knows about* —
+so an untracked module is invisible to it, while `typecheck`, `docs-coverage` and `test` all
+walk the tree and see it. A fresh CI checkout has everything tracked, so the gap only ever
+showed up as a red CI job on a green local run. The extra pass is the same documented
+command with `--all-files` swapped for `--files <paths>`, not a second `prek` invocation
+written here; a file that is genuinely disposable belongs in `.gitignore`, which is what the
+note printed alongside it says.
+
 Every selected gate runs even after one fails, and the summary at the end is the whole
 picture — the same reason `ci-gate` aggregates rather than the jobs depending on each other.
 

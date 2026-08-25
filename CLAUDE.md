@@ -50,6 +50,15 @@ python scripts/gates.py --list       # what is defined, without running anything
 makes running the runner equivalent to running CI. Adding a gate means editing `ci.yml` and
 the README fence; the runner picks it up with no change.
 
+It does exactly three things more than the fence says, each declared in a table so it lands
+in a reviewable diff: `SKIP_GUARD` (#34), `GATE_ENV` (#81), and `GIT_SCOPED` (#89). The
+third is the subtlest: `prek run --all-files` is scoped by **git**, not by the filesystem, so
+`lint` alone could go green on an untracked module that CI rejects — which is how #89 was
+found, when `_release_state.py` passed the gate while untracked and failed `ruff check` the
+moment it was staged. The second pass swaps `--all-files` for `--files <paths>` **in the
+gate's own documented command**, so the no-recipes property survives; writing a fresh `prek`
+line here would have been the second home #52 removed.
+
 Two gates have side effects worth knowing before running them:
 
 - `lowest-deps` (`uv sync --resolution lowest-direct`) **rewrites `uv.lock`'s resolution in
