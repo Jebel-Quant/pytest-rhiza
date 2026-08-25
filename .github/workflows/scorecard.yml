@@ -1,0 +1,75 @@
+name: Scorecard
+
+# OSSF Scorecard, restored by #86 alongside CodeQL and for the same reason: the
+# `rhiza_scorecard.yml` stub deleted in #52 called jebel-quant/rhiza's reusable workflow,
+# and the objection recorded there was to that *edge*, not to the scoring. This calls
+# `ossf/scorecard-action` directly, so no `uses:` line points at rhiza.
+#
+# What it measures that nothing else here does: this repository's own supply-chain
+# posture — whether actions are pinned, whether workflow tokens are least-privilege,
+# whether branch protection is on, whether releases are signed. Those are properties of
+# the repository rather than of the code, so neither bandit nor CodeQL nor pip-audit
+# reports on them, and several of them are conventions this repo already follows by hand
+# (SHA pins, `permissions: contents: read`) with nothing checking that they stay followed.
+#
+# Weekly rather than per-push: the inputs are repository settings and dependency metadata,
+# which do not change per commit, and the checks are rate-limited against the GitHub API.
+# The `branch_protection` check additionally reports unknown without a PAT — that is
+# expected on the default token and is not a failure of this job.
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "30 7 * * 1"  # Monday 07:30 UTC, between codeql.yml and weekly.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      # Upload the SARIF so findings land in the Security tab rather than only in the log.
+      security-events: write
+      # `publish_results: true` attests the run through the OIDC token. That is what lets
+      # the score be served publicly and what a consumer would check; without it the job
+      # still scores but the result stays private to this repository.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Retained separately from the SARIF upload because the Security tab keeps only the
+      # findings it can map to code; the raw file carries the per-check scores and the
+      # reasons, which is what a drop in the score has to be diagnosed from.
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          sarif_file: results.sarif

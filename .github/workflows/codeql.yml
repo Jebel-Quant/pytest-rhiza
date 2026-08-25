@@ -1,0 +1,70 @@
+name: CodeQL
+
+# Dataflow SAST, restored by #86.
+#
+# `rhiza_codeql.yml` used to sit here and was deleted in #52. The reason recorded in
+# ci.yml's header was the *pinned edge*: that stub called `jebel-quant/rhiza`'s reusable
+# CodeQL workflow, which meant maintaining a dependency edge to rhiza for scanning that
+# this repository does not otherwise need — and rhiza pins pytest-rhiza, so the edge ran
+# the wrong way round. Nothing in that argument was about CodeQL itself, but nothing
+# replaced it either, so the scanning went with the edge.
+#
+# This file is the scanning without the edge: `github/codeql-action` called directly, so
+# there is no `uses:` line pointing at jebel-quant/rhiza and no cycle to close.
+#
+# Why it is worth having beside `security` (bandit). bandit pattern-matches one file at a
+# time and does not follow a value across a function or module boundary; CodeQL does. The
+# closure argument ci.yml already makes for `audit` and `license` applies unchanged here:
+# pytest-rhiza is a runtime dependency of every rhiza-managed repo, so a finding in this
+# source is a finding in every consumer's test environment.
+#
+# Third-party actions are SHA-pinned with the version in a trailing comment; see ci.yml's
+# header for why a tag — even an exact one — is not enough, and .github/dependabot.yml for
+# what keeps the pin moving.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Monday 07:00 UTC, an hour before weekly.yml. The scheduled run is not redundant with
+    # the push trigger: CodeQL's query packs are updated independently of this repository,
+    # so a query added after the last commit would otherwise never run against this code.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      # The one elevation, and it is what makes the job useful rather than decorative:
+      # without it the SARIF cannot be uploaded and findings never reach the Security tab.
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # `build-mode: none` because this is pure Python — there is nothing to compile, and
+      # the alternative modes exist for languages where the build is how sources are
+      # discovered. Declaring it explicitly rather than letting the action infer keeps a
+      # future language addition from silently changing what this job does.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          languages: python
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          category: "/language:python"
