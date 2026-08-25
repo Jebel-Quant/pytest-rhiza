@@ -88,6 +88,25 @@ GATE_ENV: dict[str, dict[str, str]] = {
     "rhiza-test": {"RHIZA_DOCTEST_FOLDERS": "src scripts"},
 }
 
+#: Gates whose documented command line is scoped by **git** rather than by the filesystem,
+#: mapped to the flag that does the scoping (#89). ``prek run --all-files`` means every file
+#: *git knows about*, so an untracked one is invisible to it — while `typecheck`,
+#: `docs-coverage` and `test` all walk the tree and see it. CI never reproduces the gap,
+#: because a fresh checkout has everything tracked, so the gate that exists to make a local
+#: pass mean what CI's does could go green on a module CI would reject.
+#:
+#: That is not a corner case: a brand-new module is exactly where a missing
+#: ``[lint.per-file-ignores]`` entry is most likely, because the entry cannot exist yet. It
+#: is how #89 was found — ``_release_state.py`` passed this gate while untracked and failed
+#: ``ruff check`` the moment it was staged.
+#:
+#: The second pass is built by swapping this flag for ``--files <paths>`` in the gate's
+#: *own* documented command, rather than by writing a second prek invocation here. That
+#: keeps the property #66 was careful about: the runner holds no recipes, only the README's.
+GIT_SCOPED: dict[str, str] = {
+    "lint": "--all-files",
+}
+
 _SKIPPED_MESSAGE = (
     "A self-applied check skipped. A skipped assertion reads as a pass, which is the "
     "defect this guard exists to prevent (#34)."
@@ -154,9 +173,10 @@ def _run(command: str, *, capture: bool, env: dict[str, str] | None = None) -> t
 
     # S603/B603 are suppressed on both calls below for one reason: the argument list comes
     # from README.md in this repository — reviewed content, and already the trust boundary
-    # `checks/test_readme_validation` executes under — and there is no shell, so nothing in
-    # it is re-interpreted. The reason lives here rather than trailing the directive,
-    # because prose after the code is what ruff reads as a second code.
+    # `checks/test_readme_validation` executes under — or from a constant in this module
+    # (:data:`RESTORE_COMMAND`, :func:`untracked_files`'s query). There is no shell, so
+    # nothing in it is re-interpreted. The reason lives here rather than trailing the
+    # directive, because prose after the code is what ruff reads as a second code.
     if not capture:
         finished = subprocess.run(argv, cwd=ROOT, check=False, env=child_env)  # noqa: S603  # nosec B603
         return finished.returncode, ""
@@ -167,6 +187,66 @@ def _run(command: str, *, capture: bool, env: dict[str, str] | None = None) -> t
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
     return proc.returncode, proc.stdout
+
+
+def untracked_files() -> list[str]:
+    """Return the files git neither tracks nor ignores.
+
+    ``--exclude-standard`` is what keeps this honest: a path in ``.gitignore`` is a path the
+    repository has deliberately disowned, and linting it would turn the fix for a noisy
+    scratch file into a lint failure. What is left is the set a contributor is on the way to
+    committing.
+
+    Returns:
+        Repository-relative paths, or an empty list when git cannot answer — outside a
+        repository, or with no git on PATH. Unknown is treated as "nothing extra to lint"
+        rather than as an error, because this pass is a supplement to the documented
+        command and must not be able to fail a gate on its own.
+    """
+    status, stdout = _run("git ls-files --others --exclude-standard", capture=True)
+    if status != 0:
+        return []
+    return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+
+def _files_flag(paths: list[str]) -> str:
+    """Render paths as the ``--files`` argument that replaces a whole-tree flag.
+
+    Args:
+        paths: Repository-relative paths, from :func:`untracked_files`.
+
+    Returns:
+        ``--files`` followed by each path, quoted — the command is re-split with
+        :func:`shlex.split`, so a path containing a space has to survive that round trip.
+    """
+    return "--files " + " ".join(shlex.quote(path) for path in paths)
+
+
+def _untracked_pass(name: str, commands: list[str]) -> list[str]:
+    """Return the extra command lines covering what a git-scoped gate would skip.
+
+    Empty for every gate not in :data:`GIT_SCOPED`, and empty for those too whenever there
+    is nothing untracked — which is the normal state of a clean checkout, so this costs a
+    single ``git ls-files`` and no extra child process.
+
+    Args:
+        name: The gate name.
+        commands: Its documented command lines, from :func:`documented_gates`.
+
+    Returns:
+        The scoped commands with the whole-tree flag swapped for ``--files <paths>``, in
+        the order they are documented.
+    """
+    flag = GIT_SCOPED.get(name)
+    if flag is None:
+        return []
+    scoped = [command for command in commands if flag in command]
+    if not scoped:
+        return []  # the documented line no longer carries the flag; nothing to re-scope
+    paths = untracked_files()
+    if not paths:
+        return []
+    return [command.replace(flag, _files_flag(paths)) for command in scoped]
 
 
 def run_gate(name: str, commands: list[str]) -> bool:
@@ -187,8 +267,14 @@ def run_gate(name: str, commands: list[str]) -> bool:
     """
     guarded = name in SKIP_GUARD
     env = GATE_ENV.get(name)
+    extra = _untracked_pass(name, commands)
+    if extra:
+        print(
+            f"\033[33mnote\033[0m: {name} is scoped by git, so untracked files get a second "
+            f"pass (#89). Add a genuinely disposable file to .gitignore to exclude it."
+        )
     try:
-        for command in commands:
+        for command in [*commands, *extra]:
             print(f"\n\033[1m→ {name}\033[0m: {command}", flush=True)
             status, stdout = _run(command, capture=guarded, env=env)
             if status != 0:
