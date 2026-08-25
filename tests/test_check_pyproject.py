@@ -17,6 +17,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import pytest
+
 if TYPE_CHECKING:  # pragma: no cover - import only for the fixture's type
     from conftest import Subject
 
@@ -49,7 +51,7 @@ tag = false
 
 # Every test in the module, for the sound case. Asserted as a number so that a check
 # lost to a collection change shows up here rather than passing quietly.
-TOTAL_CHECKS = 27
+TOTAL_CHECKS = 28
 
 
 class TestSoundSubject:
@@ -343,3 +345,37 @@ class TestTagAgreement:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "No version tags found" in result.stdout, result.stdout
+
+
+class TestStalledRelease:
+    """A release whose phase B never ran must go red rather than stay quietly green (#85)."""
+
+    def test_a_bump_merged_long_ago_with_no_matching_tag_is_reported(
+        self, subject: Callable[..., Subject], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The state pytest-rhiza itself sat in: 0.4.1 declared, merged, and never tagged.
+
+        The commit is backdated through ``GIT_COMMITTER_DATE`` rather than the check being
+        handed a fake clock, because what is under test here is the whole path a consumer
+        runs — the fixture, the pickaxe and the assertion — not just the arithmetic.
+        """
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "2020-01-01T00:00:00+0000")
+        repo = subject({"pyproject.toml": SOUND_PYPROJECT, "README.md": "# Demo\n"}, tag="v1.2.2")
+        repo.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+        result = repo.run("test_pyproject", args=("-k", "bump_that_produced"))
+
+        assert result.returncode != 0
+        assert "never tagged and never published" in result.stdout, result.stdout
+
+    def test_a_release_in_flight_still_passes(self, subject: Callable[..., Subject]) -> None:
+        """The window #62 opened deliberately stays open: a fresh merge is not a stall."""
+        repo = subject({"pyproject.toml": SOUND_PYPROJECT, "README.md": "# Demo\n"}, tag="v1.2.2")
+        repo.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+        result = repo.run("test_pyproject", args=("-k", "bump_that_produced"))
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "1 passed" in result.stdout, result.stdout

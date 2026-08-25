@@ -71,6 +71,51 @@ def _find_packages(src_path: Path) -> Iterator[Path]:
             yield package_dir
 
 
+def _import_locations(module: ModuleType) -> list[Path]:
+    """Return the resolved directories ``module`` was imported from.
+
+    A package carries ``__path__``; a plain module does not, and ``getattr`` returning
+    ``[]`` for it is deliberate. A same-named *module* shadowing a package cannot be the
+    folder under test, so an empty list correctly falls through to eviction.
+
+    Args:
+        module: An entry from ``sys.modules``.
+
+    Returns:
+        Its ``__path__`` entries, resolved, or an empty list when it has none.
+    """
+    return [Path(entry).resolve() for entry in getattr(module, "__path__", [])]
+
+
+def _describe(located: list[Path]) -> list[str] | str:
+    """Render import locations for the eviction log line.
+
+    Args:
+        located: The paths from :func:`_import_locations`.
+
+    Returns:
+        The paths as strings, or a stand-in phrase when there are none — a namespace
+        package or a C extension can be in ``sys.modules`` with nothing to point at, and
+        an empty list in the log reads as a bug rather than as an answer.
+    """
+    return [str(path) for path in located] or "an unknown location"
+
+
+def _cached_names(top_level: str) -> list[str]:
+    """Return every ``sys.modules`` key belonging to one top-level package.
+
+    Materialised into a list before the caller deletes anything, because deleting from
+    ``sys.modules`` while iterating it raises.
+
+    Args:
+        top_level: The package name, without dots.
+
+    Returns:
+        The package itself and each of its imported submodules.
+    """
+    return [name for name in list(sys.modules) if name == top_level or name.startswith(f"{top_level}.")]
+
+
 def _evict_shadowing_package(
     monkeypatch: pytest.MonkeyPatch, logger: logging.Logger, import_root: Path, package_dir: Path
 ) -> None:
@@ -100,16 +145,16 @@ def _evict_shadowing_package(
     existing = sys.modules.get(top_level)
     if existing is None:
         return
-    located = [Path(entry).resolve() for entry in getattr(existing, "__path__", [])]
+    located = _import_locations(existing)
     if (import_root / top_level).resolve() in located:
         return  # already the folder under test; nothing is being shadowed
     logger.info(
         "Evicting cached package %s (imported from %s) so %s is what gets measured",
         top_level,
-        [str(path) for path in located] or "an unknown location",
+        _describe(located),
         import_root / top_level,
     )
-    for cached in [name for name in list(sys.modules) if name == top_level or name.startswith(f"{top_level}.")]:
+    for cached in _cached_names(top_level):
         monkeypatch.delitem(sys.modules, cached, raising=False)
 
 

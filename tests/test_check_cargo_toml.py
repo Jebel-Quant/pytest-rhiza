@@ -44,7 +44,7 @@ search = '\\[package\\]([\\s\\S]*?)version = "{current_version}"'
 replace = '[package]\\1version = "{new_version}"'
 """
 
-TOTAL_CHECKS = 17
+TOTAL_CHECKS = 18
 
 
 def _crate(**extra: str) -> dict[str, str]:

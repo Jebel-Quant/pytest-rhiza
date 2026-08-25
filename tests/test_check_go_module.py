@@ -45,7 +45,7 @@ replace = 'const Version = "{new_version}"'
 
 VERSION_GO = "internal/version/version.go"
 
-TOTAL_CHECKS = 12
+TOTAL_CHECKS = 13
 
 
 def _module(**extra: str) -> dict[str, str]:

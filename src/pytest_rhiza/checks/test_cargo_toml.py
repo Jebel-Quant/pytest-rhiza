@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from pytest_rhiza._bumpversion import SyncedBumpversionConfig
+from pytest_rhiza._release_state import assert_release_not_stalled
 from pytest_rhiza._toml import TomlTable
 from pytest_rhiza._versions import assert_declared_version_not_behind_tag
 
@@ -191,3 +192,19 @@ class TestGitTagVersion:
                 "it in Cargo.toml, so the next release would fail to find it."
             ),
         )
+
+    def test_the_bump_that_produced_this_version_was_tagged(
+        self, latest_tag: str, package: TomlTable, root: Path
+    ) -> None:
+        """The bump that produced this version must have been tagged (#85).
+
+        ``assert_declared_version_not_behind_tag`` permits the manifest to lead the newest
+        tag, because that is what a release in flight looks like. Nothing bounded how long
+        it may lead for, so a release whose phase B never ran stayed green indefinitely
+        while declaring a version that was never tagged and never published. See
+        :mod:`pytest_rhiza._release_state`.
+        """
+        version = package.get("version")
+        if isinstance(version, dict):
+            pytest.skip("[package].version is inherited from the workspace")
+        assert_release_not_stalled(root, latest_tag, str(version), manifest="Cargo.toml")
