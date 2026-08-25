@@ -99,6 +99,12 @@ filename = "src/pytest_rhiza/__init__.py"
 search = "__version__ = \"{current_version}\""
 replace = "__version__ = \"{new_version}\""
 
+[[tool.bumpversion.files]]
+filename = "uv.lock"
+regex = true
+search = 'name = "pytest-rhiza"\nversion = "{current_version}"'
+replace = 'name = "pytest-rhiza"\nversion = "{new_version}"'
+
 # Source modules in src/pytest_rhiza/checks/ are deliberately named test_*.py because
 # they are pytest check modules collected out of site-packages via `--pyargs`. Mirroring
 # them with tests/pytest_rhiza/checks/test_test_*.py would produce nonsensical file names
