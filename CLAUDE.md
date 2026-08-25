@@ -106,8 +106,8 @@ from the arguments, and under `--pyargs` those point into site-packages.
 
 ### Private helpers exist because one distribution is the shared home
 
-`_fences`, `_bumpversion`, `_versions`, `_source_folder`, `_process` hold logic that
-upstream was **duplicated across bundles** — a Rust project received one file and not the
+`_fences`, `_bumpversion`, `_versions`, `_release_state`, `_source_folder`, `_process`
+hold logic that upstream was **duplicated across bundles** — a Rust project received one file and not the
 other, so a shared helper would have needed a third home both bundles shipped. One
 distribution *is* that third home, so the trade reversed. Each module's docstring records
 the specific reason; read it before folding one back into a check.
@@ -123,6 +123,15 @@ Two of them encode non-obvious decisions:
 - `_versions` asserts the declared version is *not behind* the newest tag rather than equal
   to it, because `/rhiza:release` is two-phase: phase A bumps the version on a PR, phase B
   tags the merged commit, and equality cannot hold in between (#62).
+- `_release_state` is the **upper bound** on that permission (#85). "Ahead of the newest
+  tag" describes both a release in flight and one that *stopped* — phase A merged, phase B
+  never ran — and until #85 the two were indistinguishable, so a version that was never
+  tagged and never published kept every gate green. This package sat in that state for
+  three and a half days while `rhiza-test` reported `34 passed, 0 skipped`. The check fires
+  only once the bump is on the **default branch** (an open release PR is not a stall) and
+  older than `RHIZA_RELEASE_GRACE_DAYS`, default 3. Everything git cannot answer — shallow
+  clone, no `origin/HEAD`, a version the pickaxe cannot find — is a return, not a failure:
+  reporting those as red would mirror the #34 defect it exists to catch.
 
 ## Testing model
 
@@ -156,8 +165,8 @@ mode (#34) is the one this suite is most careful about.
   is therefore opted out of in `[tool.check_test_layout]` with a recorded reason; tests are
   organised by behaviour in `tests/` instead.
 - **Docstring coverage is 100% over `src` *and* `tests`** — a test whose name is its only
-  explanation is what that bar exists to prevent. Docstrings here carry real doctests (90 of
-  them — 84 under `src`, 6 in `scripts/gates.py`); `_resolve_root` documents its ladder by
+  explanation is what that bar exists to prevent. Docstrings here carry real doctests (96 of
+  them — 90 under `src`, 6 in `scripts/gates.py`); `_resolve_root` documents its ladder by
   example precisely because a fixture needs a live session to exercise. The doctest gate
   walks both folders since #81; before that an example under `scripts/` would have been
   collected by nothing, and `test_doctests` *skips* rather than fails when it attempts
@@ -178,7 +187,10 @@ mode (#34) is the one this suite is most careful about.
 - **Nothing here invokes `jebel-quant/rhiza`.** That repo pins pytest-rhiza as a dependency,
   so calling its reusable CI would close a cycle — rhiza's workflow running the gates that
   judge the package rhiza depends on. `rhiza_release.yml` is the one exception, synced
-  verbatim because PyPI Trusted Publishing validates the exact workflow path.
+  verbatim because PyPI Trusted Publishing validates the exact workflow path. `codeql.yml`
+  and `scorecard.yml` (#86) are the shape a restored scanner takes: the first-party action
+  called directly, never rhiza's reusable wrapper, so the scanning returns without the edge
+  #52 removed.
 - **The `pytest>=8.1` floor is bisected, not guessed.** 8.0.x walks the generic ancestor
   chain of a `--pyargs` argument and dies on an unstat-able `/home` entry on GitHub runners
   (#23). The `lowest-deps` gate is what stops that floor rotting.

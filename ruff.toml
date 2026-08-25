@@ -175,6 +175,12 @@ line-ending = "auto"
 "src/pytest_rhiza/_versions.py" = [
     "S101",  # assert is the test idiom, and how every complaint in this package is reported
 ]
+# The bound on how long a release may stay in flight (#85). Same reasoning again: it holds
+# an assertion for the layer checks and must not sit under `checks/`, where a consumer
+# could name it on a `--pyargs` command line by mistake.
+"src/pytest_rhiza/_release_state.py" = [
+    "S101",  # assert is the test idiom, and how every complaint in this package is reported
+]
 # Project test suite only — allowances the synced .rhiza/tests should not inherit
 "tests/**/*.py" = [
     "RUF002",  # docstrings quote prose with typographic unicode (e.g. en dash)

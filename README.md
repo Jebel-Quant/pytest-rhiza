@@ -156,6 +156,28 @@ Without it the check resolves `src` alone, and a project keeping its Python else
 its examples silently unchecked — rhiza's own repo being the extreme case, with no `src/`
 at all.
 
+### How long a release may stay in flight
+
+The version checks assert the declared version is not *behind* the newest tag, and permit
+it to be *ahead* — that is what a release in flight looks like, since `/rhiza:release`
+bumps by pull request (phase A) and tags the merged commit afterwards (phase B). Nothing
+bounded how long it may lead for, so a release whose phase B never ran stayed green
+indefinitely while declaring a version that was never tagged and never published (#85).
+This package sat in exactly that state.
+
+`RHIZA_RELEASE_GRACE_DAYS` is that bound, defaulting to **3 days**. It is measured from
+the commit that wrote the version into the manifest, and only once that commit is on the
+default branch — while the release PR is open, nothing fires. A project whose cadence is
+genuinely slower raises it:
+
+```bash +RHIZA_SKIP
+RHIZA_RELEASE_GRACE_DAYS=30 uvx rhiza-task rhiza-test
+```
+
+Everything git cannot answer is a skip rather than a failure: a shallow clone, a checkout
+with no `origin/HEAD`, a manifest the version was never written into. None of those mean
+the release stalled, they mean the check has no subject.
+
 ## Two things that were decided
 
 Both of these were open questions while the split was being designed. They are settled
@@ -301,6 +323,13 @@ Publishing validates the exact workflow path. The `rhiza_codeql.yml` and
 `rhiza_scorecard.yml` stubs are gone — they called rhiza's reusable CodeQL and OSSF
 Scorecard workflows, a pinned edge to keep current for scanning this repository does not
 depend on.
+
+The *scanning* came back in #86, as `codeql.yml` and `scorecard.yml`. Only the edge was
+ever the objection: both now call `github/codeql-action` and `ossf/scorecard-action`
+directly, SHA-pinned like every other third-party action here, so there is no `uses:` line
+pointing at rhiza and no cycle. They earn their place beside `security` because bandit
+pattern-matches one file at a time and never follows a value across a boundary, and
+because nothing else here scores this repository's own supply-chain posture.
 
 The cost of dropping the Makefile was real and was stated plainly here for three releases:
 **no gate had a local entry point at all** (#49, #32). That was the call made in #52 — a
