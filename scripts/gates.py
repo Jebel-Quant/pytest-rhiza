@@ -294,25 +294,14 @@ def _print_summary(selected: list[str], failed: list[str], documented: dict[str,
             print(f"  ----  {name} (not selected)")
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, run the selected gates, and report.
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser.
 
-    Every selected gate runs even after one fails, so a single pass shows the whole
-    picture rather than stopping at the first red — the same reason ``ci-gate`` aggregates
-    instead of the jobs depending on each other.
-
-    The work is in :func:`documented_gates`, :func:`select_gates`, :func:`run_gate` and the
-    two printers; what is left here is the argument surface and the exit status. This was
-    one function until #70, where it measured CC 24 — breadth rather than nesting, but the
-    selection path it held was also the part no test reached, which is the more useful thing
-    the split bought.
-
-    Args:
-        argv: Command-line arguments, defaulting to :data:`sys.argv`.
+    Split out of :func:`main` so that function is the control flow and nothing else; the
+    option surface changes for different reasons than the exit-status logic does.
 
     Returns:
-        A process exit status: 0 when every selected gate passed, 1 when one failed, 2
-        when the selection itself was wrong.
+        The parser, with the positional gate list and the two flags.
     """
     parser = argparse.ArgumentParser(
         prog="scripts/gates.py",
@@ -321,7 +310,45 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("gates", nargs="*", help="gates to run (default: all but the destructive ones)")
     parser.add_argument("--all", action="store_true", help=f"include {', '.join(sorted(DESTRUCTIVE))}")
     parser.add_argument("--list", action="store_true", help="list the documented gates and exit")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def _announce_destructive(selected: list[str]) -> None:
+    """Print the side-effect warning for each selected gate that has one.
+
+    Printed before anything runs rather than as each gate starts, so a run that will
+    perturb the working tree says so while there is still time to interrupt it.
+
+    Args:
+        selected: The gates about to run, from :func:`select_gates`.
+    """
+    for name in selected:
+        if name in DESTRUCTIVE:
+            print(f"\033[33mnote\033[0m: {name} {DESTRUCTIVE[name]}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse arguments, run the selected gates, and report.
+
+    Every selected gate runs even after one fails, so a single pass shows the whole
+    picture rather than stopping at the first red — the same reason ``ci-gate`` aggregates
+    instead of the jobs depending on each other.
+
+    The work is in :func:`documented_gates`, :func:`select_gates`, :func:`run_gate`, the
+    two printers and :func:`_build_parser`; what is left here is the control flow and the
+    exit status. This was one function until #70, where it measured CC 24 — breadth rather
+    than nesting, but the selection path it held was also the part no test reached, which is
+    the more useful thing the split bought. #87 took the argument surface and the
+    destructive-gate notice out for the same reason, bringing it under CC 8.
+
+    Args:
+        argv: Command-line arguments, defaulting to :data:`sys.argv`.
+
+    Returns:
+        A process exit status: 0 when every selected gate passed, 1 when one failed, 2
+        when the selection itself was wrong.
+    """
+    args = _build_parser().parse_args(argv)
 
     # One handler for both failures, because they are the same answer to the user: a README
     # with no fence leaves nothing to choose from, and a typo names something that does not
@@ -336,9 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
 
-    for name in selected:
-        if name in DESTRUCTIVE:
-            print(f"\033[33mnote\033[0m: {name} {DESTRUCTIVE[name]}")
+    _announce_destructive(selected)
 
     failed = [name for name in selected if not run_gate(name, documented[name])]
     _print_summary(selected, failed, documented)
