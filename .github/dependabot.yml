@@ -19,7 +19,7 @@ updates:
   # The major-version ignore is kept *here* and dropped from github-actions below (#75),
   # because the two ecosystems fail differently. The runtime constraints in pyproject.toml
   # are deliberately loose floors (`pytest>=8.1`), so a new major needs no manifest edit to
-  # be picked up, and `weekly.yml`'s `dep-compat` job resolves with `--upgrade --no-locked`
+  # be picked up, and `weekly.yml`'s `dep-compat` job resolves with `--upgrade`
   # every Monday specifically to catch one that breaks this package. Actions have neither
   # property: a SHA pin is exact, and nothing else re-resolves it.
   - package-ecosystem: "uv"
