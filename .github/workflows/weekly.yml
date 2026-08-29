@@ -41,9 +41,14 @@ jobs:
       # rhiza-managed repo's test environment, so a break here is a break everywhere.
       #
       # `--upgrade` rather than `--frozen`: resolving fresh is the entire point, so this job
-      # deliberately does not use uv.lock.
+      # deliberately does not use uv.lock. `--upgrade` is the whole instruction — it
+      # re-resolves every dependency to the newest compatible version and rewrites the lock
+      # in the runner's checkout, which is thrown away. There is no companion flag to add:
+      # `--no-locked` does not exist (uv has `--locked`, `--frozen`, `--no-sync`), and it
+      # failed the job with `unexpected argument '--no-locked' found` rather than silently
+      # resolving from the lockfile.
       - name: Resolve fresh and run the suite
-        run: uv run --group test --upgrade --no-locked pytest -ra
+        run: uv run --group test --upgrade pytest -ra
 
   link-check:
     name: Check links in README.md
