@@ -1,5 +1,16 @@
 # pytest-rhiza
 
+[![PyPI version](https://badge.fury.io/py/pytest-rhiza.svg)](https://pypi.org/project/pytest-rhiza/)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python versions](https://img.shields.io/badge/Python-3.11%20%E2%80%A2%203.12%20%E2%80%A2%203.13%20%E2%80%A2%203.14-blue?logo=python)](https://www.python.org/)
+[![CI](https://github.com/jebel-quant/pytest-rhiza/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/jebel-quant/pytest-rhiza/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/jebel-quant/pytest-rhiza/actions/workflows/codeql.yml/badge.svg?event=push)](https://github.com/jebel-quant/pytest-rhiza/actions/workflows/codeql.yml)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg?logo=ruff)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Jebel-Quant/pytest-rhiza/badge)](https://scorecard.dev/viewer/?uri=github.com/Jebel-Quant/pytest-rhiza)
+[![Downloads](https://static.pepy.tech/personalized-badge/pytest-rhiza?period=month&units=international_system&left_color=black&right_color=orange&left_text=PyPI%20downloads%20per%20month)](https://pepy.tech/project/pytest-rhiza)
+
 The [rhiza](https://github.com/jebel-quant/rhiza) repository checks, installed as a pytest
 plugin instead of synced into every consumer repository as `.rhiza/tests/`.
 
