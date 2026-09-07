@@ -7,7 +7,8 @@ to ``.rhiza/tests/test_pyproject.py``. It now arrives installed, and is collecte
 Validates that pyproject.toml:
 - is syntactically valid TOML
 - contains all required [project] fields
-- declares a semver-compatible version
+- declares a version, statically or as ``dynamic = ["version"]``
+- declares a semver-compatible version, when that version is static
 - specifies a minimum Python version via requires-python
 - lists at least one named author
 - provides [project.urls] with Homepage and Repository
@@ -18,6 +19,25 @@ Validates that pyproject.toml:
 
 Reachability of that tag lives in ``test_release_tags.py``, shipped by ``core``: the
 invariant holds for every language layer, not just this one.
+
+**Dynamic versions.** A project may derive ``[project].version`` from its VCS instead of
+declaring it -- ``dynamic = ["version"]`` plus a backend plugin such as hatch-vcs. Six
+assertions here are about a *written* version, and each of them skips with a reason on
+such a project rather than judging a string that does not exist: the semver shape, the
+three bump-config assertions, and the two tag-agreement ones.
+
+That is not a gap in coverage, it is the same coverage arriving for free. Every defect
+those six catch -- a version behind the newest tag, a bump computed from `git describe`
+because no config was discoverable, a release stalled between its bump and its tag -- is
+a disagreement between a number in a file and a number in git. A version *derived* from
+git cannot disagree with git. What the six assert is that a project which keeps the two
+in step by hand has actually done so.
+
+One defect does not go away, and it is worth knowing because it is silent: a VCS-derived
+version resolves to something like ``0.1.dev1+g1234567`` in a clone with no tags, so a
+release built from a shallow checkout publishes at a version nobody asked for. That is a
+property of the checkout rather than of the manifest, so it is not assertable from here --
+fetch the full history (``fetch-depth: 0``) in any job that builds a distribution.
 """
 
 from __future__ import annotations
@@ -40,7 +60,10 @@ from pytest_rhiza._toml import TomlTable
 from pytest_rhiza._versions import assert_declared_version_not_behind_tag
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
-_REQUIRED_PROJECT_FIELDS = ("name", "version", "description", "readme", "requires-python", "license", "authors")
+# ``version`` is deliberately absent: it may be declared statically *or* derived from the
+# VCS, and ``test_a_version_is_declared`` states that either-or rather than this list
+# demanding the key. Everything here is required unconditionally.
+_REQUIRED_PROJECT_FIELDS = ("name", "description", "readme", "requires-python", "license", "authors")
 
 
 @pytest.fixture(scope="module")
@@ -60,6 +83,49 @@ def project(pyproject: TomlTable) -> TomlTable:
     if not isinstance(table, dict):
         pytest.fail("pyproject.toml is missing a [project] table")
     return table
+
+
+def _version_is_dynamic(project: TomlTable) -> bool:
+    """Report whether the project derives its version rather than declaring it.
+
+    PEP 621's rule is that a key the backend supplies must be named in ``dynamic`` and
+    must *not* also be written in the table. Read the declaration rather than inferring
+    from an absent ``version``, so that a manifest which simply forgot the field is
+    reported by :meth:`TestProjectFields.test_a_version_is_declared` instead of being
+    silently excused from six assertions.
+
+    Args:
+        project: The parsed ``[project]`` table.
+
+    Returns:
+        True when ``version`` is listed in ``[project].dynamic``.
+
+    Examples:
+        >>> _version_is_dynamic({"dynamic": ["version"]})
+        True
+        >>> _version_is_dynamic({"version": "1.2.3"})
+        False
+        >>> _version_is_dynamic({})
+        False
+    """
+    dynamic = project.get("dynamic")
+    return isinstance(dynamic, list) and "version" in dynamic
+
+
+@pytest.fixture(scope="module")
+def static_version(project: TomlTable) -> str:
+    """The version as written in the manifest, or skip when it is derived from the VCS.
+
+    One fixture for every assertion that needs a written version, so that a dynamic
+    project reports the same reason six times rather than six different ones -- and so
+    that adding such an assertion cannot forget to handle the dynamic case.
+    """
+    if _version_is_dynamic(project):
+        pytest.skip("[project].version is dynamic — no written version to compare against git")
+    version = project.get("version")
+    if not isinstance(version, str):
+        pytest.skip("[project].version is dynamic — no written version to compare against git")
+    return version
 
 
 class TestPyprojectToml:
@@ -95,11 +161,39 @@ class TestProjectFields:
         assert isinstance(name, str), "[project].name must be a string"
         assert name.strip(), "[project].name must be a non-empty string"
 
-    def test_version_follows_semver(self, project: TomlTable) -> None:
-        """[project].version must follow semver (MAJOR.MINOR.PATCH)."""
-        version = project.get("version", "")
-        assert _SEMVER_RE.match(str(version)), (
-            f"[project].version {version!r} does not follow semver (expected MAJOR.MINOR.PATCH)"
+    def test_a_version_is_declared(self, project: TomlTable) -> None:
+        """The project must say what its version is, in one of the two PEP 621 ways.
+
+        Either ``version = "1.2.3"`` or ``dynamic = ["version"]`` with a backend that
+        supplies it. Neither is an error, and it is not a cosmetic one: a wheel cannot be
+        built without a version, so this fails fast on a manifest that would otherwise
+        fail at build time with a message about metadata rather than about the omission.
+
+        Whether the backend can actually produce a dynamic version is the backend's own
+        error, raised loudly at build time. This check does not second-guess it, because
+        the list of plugins that can is open-ended and a stale allowlist here would fail
+        a project that builds perfectly well.
+        """
+        static = isinstance(project.get("version"), str)
+        assert static or _version_is_dynamic(project), (
+            '[project] declares no version. Write one (`version = "1.2.3"`), or derive it '
+            'from the VCS by listing it in `dynamic` (`dynamic = ["version"]`) with a '
+            "backend plugin such as hatch-vcs."
+        )
+        assert not (static and _version_is_dynamic(project)), (
+            "[project] both writes `version` and lists it in `dynamic`, which PEP 621 "
+            "forbids: the two can disagree and nothing says which wins. Keep whichever is "
+            "the source of truth and delete the other."
+        )
+
+    def test_version_follows_semver(self, static_version: str) -> None:
+        """[project].version must follow semver (MAJOR.MINOR.PATCH).
+
+        Skipped on a dynamic version: the shape is then whatever the backend derives from
+        the tag, and a tag's own shape is asserted by ``test_release_tags.py``.
+        """
+        assert _SEMVER_RE.match(static_version), (
+            f"[project].version {static_version!r} does not follow semver (expected MAJOR.MINOR.PATCH)"
         )
 
     def test_requires_python_is_set(self, project: TomlTable) -> None:
@@ -244,25 +338,17 @@ class TestBumpversionConfigIsDiscoverable:
     itself.
     """
 
-    @pytest.fixture
-    def declared_version(self, project: TomlTable) -> str:
-        """The statically declared project version, or skip when it is dynamic."""
-        version = project.get("version")
-        if not isinstance(version, str):
-            pytest.skip("[project].version is dynamic — no static location to bump")
-        return version
-
-    def test_a_discoverable_config_exists(self, root: Path, pyproject: TomlTable, declared_version: str) -> None:
+    def test_a_discoverable_config_exists(self, root: Path, pyproject: TomlTable, static_version: str) -> None:
         """A bumpversion section must live in a file bump-my-version actually reads."""
         assert discovered_configs(root), (
-            f"pyproject.toml declares version {declared_version!r} but no bumpversion config "
+            f"pyproject.toml declares version {static_version!r} but no bumpversion config "
             f"was found in any file bump-my-version searches ({', '.join(DISCOVERABLE_CONFIGS)}). "
             f"It will silently fall back to `git describe`, so a release can be cut at a version "
             f"that already exists. Add a [tool.bumpversion] table to pyproject.toml."
             f"{legacy_config_hint(root)}"
         )
 
-    def test_pyproject_is_the_config_that_wins(self, root: Path, declared_version: str) -> None:
+    def test_pyproject_is_the_config_that_wins(self, root: Path, static_version: str) -> None:
         """No earlier-searched file may shadow pyproject.toml's table.
 
         Search order is significant: a ``.bumpversion.toml`` beats pyproject.toml and
@@ -273,18 +359,18 @@ class TestBumpversionConfigIsDiscoverable:
         assert not shadowing, (
             f"{shadowing} is searched before pyproject.toml and would shadow its "
             f"[tool.bumpversion] table, detaching the bump from [project].version "
-            f"({declared_version!r})"
+            f"({static_version!r})"
         )
 
-    def test_config_does_not_duplicate_the_version(self, pyproject: TomlTable, declared_version: str) -> None:
+    def test_config_does_not_duplicate_the_version(self, pyproject: TomlTable, static_version: str) -> None:
         """``current_version`` is redundant in pyproject.toml, and drifts once stale."""
         section = pyproject.get("tool", {}).get("bumpversion")
         if not isinstance(section, dict):
             pytest.skip("no [tool.bumpversion] table — reported by test_a_discoverable_config_exists")
         declared_in_config = section.get("current_version")
-        assert declared_in_config in (None, declared_version), (
+        assert declared_in_config in (None, static_version), (
             f"[tool.bumpversion].current_version is {declared_in_config!r} but "
-            f"[project].version is {declared_version!r}; bumping from the stale value cannot "
+            f"[project].version is {static_version!r}; bumping from the stale value cannot "
             f"match the version in the file. Drop current_version — bump-my-version reads "
             f"[project].version natively."
         )
@@ -305,15 +391,18 @@ class TestGitTagVersion:
     layers need it.
     """
 
-    def test_pyproject_version_is_not_behind_the_latest_tag(self, latest_tag: str, project: TomlTable) -> None:
+    def test_pyproject_version_is_not_behind_the_latest_tag(self, latest_tag: str, static_version: str) -> None:
         """[project].version must be the newest vX.Y.Z tag, or ahead of it.
 
         Ahead is a release in flight; behind is drift. See
         :mod:`pytest_rhiza._versions` for why this is not an equality check.
+
+        Skipped on a dynamic version, where the two cannot disagree: the number *is*
+        derived from the tag, so there is no second copy to drift.
         """
         assert_declared_version_not_behind_tag(
             latest_tag,
-            str(project.get("version", "")),
+            static_version,
             location="[project].version in pyproject.toml",
             consequence=(
                 "bump-my-version reads [project].version natively, so the next release would "
@@ -322,7 +411,7 @@ class TestGitTagVersion:
         )
 
     def test_the_bump_that_produced_this_version_was_tagged(
-        self, latest_tag: str, project: TomlTable, root: Path
+        self, latest_tag: str, static_version: str, root: Path
     ) -> None:
         """The bump that produced this version must have been tagged (#85).
 
@@ -331,10 +420,14 @@ class TestGitTagVersion:
         it may lead for, so a release whose phase B never ran stayed green indefinitely
         while declaring a version that was never tagged and never published. See
         :mod:`pytest_rhiza._release_state`.
+
+        Skipped on a dynamic version, and this is the assertion that dynamic versioning
+        makes unnecessary rather than merely unassertable: there is no bump to leave
+        untagged. The version does not move until the tag does.
         """
         assert_release_not_stalled(
             root,
             latest_tag,
-            str(project.get("version", "")),
+            static_version,
             manifest="pyproject.toml",
         )
