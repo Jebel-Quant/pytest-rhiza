@@ -53,6 +53,13 @@ tag = false
 # lost to a collection change shows up here rather than passing quietly.
 TOTAL_CHECKS = 28
 
+# How many of those are about a *written* version and therefore skip on a project that
+# derives it from the VCS: the semver shape, the three bump-config assertions, and the two
+# tag-agreement ones. Asserted as a number for the same reason as TOTAL_CHECKS, and
+# separately from it so that a new assertion taking the `static_version` fixture is visible
+# as a change to this line rather than absorbed into the total.
+DYNAMIC_VERSION_SKIPS = 6
+
 
 class TestSoundSubject:
     """A manifest carrying everything the check asks for passes all of it."""
@@ -99,8 +106,12 @@ class TestRequiredFields:
         result = repo.run("test_pyproject")
 
         assert result.returncode != 0
-        for field in ("version", "description", "readme", "requires-python", "license", "authors"):
+        for field in ("description", "readme", "requires-python", "license", "authors"):
             assert f"missing required field '{field}'" in result.stdout, result.stdout
+        # `version` is not in that list, because it is required *either* way. It is
+        # reported by its own assertion, in the words a reader can act on -- write one, or
+        # derive it.
+        assert "[project] declares no version" in result.stdout, result.stdout
 
     def test_a_non_semver_version_is_rejected(self, subject: Callable[..., Subject]) -> None:
         """``1.2`` is not MAJOR.MINOR.PATCH, whatever pip makes of it."""
@@ -288,18 +299,51 @@ class TestBumpversionDiscovery:
         assert "must be false: the release flow commits and tags" in result.stdout, result.stdout
 
     def test_a_dynamic_version_skips_the_bump_assertions(self, subject: Callable[..., Subject]) -> None:
-        """With no static version there is no location to bump, so there is nothing to assert.
+        """With no written version there is no location to bump, so there is nothing to assert.
 
-        The manifest still fails overall — ``version`` is a required field and a dynamic
-        one is not declared here — but the three bump assertions skip with a reason
-        rather than judging a version that does not exist yet.
+        The whole manifest passes now, where it used to fail on ``version`` being a
+        required field. The six assertions about a written version skip with a reason
+        rather than judging a string that does not exist.
         """
         manifest = SOUND_PYPROJECT.replace('version = "1.2.3"', 'dynamic = ["version"]')
-        repo = subject({"pyproject.toml": manifest}, tag="v1.2.3")
+        repo = subject({"pyproject.toml": manifest, "README.md": "# Demo\n"}, tag="v1.2.3")
 
         result = repo.run("test_pyproject")
 
-        assert "dynamic \u2014 no static location to bump" in result.stdout, result.stdout
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "no written version to compare against git" in result.stdout, result.stdout
+        assert f"{TOTAL_CHECKS - DYNAMIC_VERSION_SKIPS} passed" in result.stdout, result.stdout
+        assert f"{DYNAMIC_VERSION_SKIPS} skipped" in result.stdout, result.stdout
+
+    def test_a_manifest_declaring_no_version_at_all_is_reported(self, subject: Callable[..., Subject]) -> None:
+        """Neither written nor dynamic is the one case that must still fail.
+
+        The pair to the test above, and the reason ``_version_is_dynamic`` reads the
+        ``dynamic`` list rather than inferring from an absent ``version``: without this,
+        making the six assertions skip on a missing version would have excused a manifest
+        that simply forgot the field, and a wheel cannot be built from one.
+        """
+        manifest = SOUND_PYPROJECT.replace('version = "1.2.3"\n', "")
+        repo = subject({"pyproject.toml": manifest, "README.md": "# Demo\n"}, tag="v1.2.3")
+
+        result = repo.run("test_pyproject")
+
+        assert result.returncode != 0
+        assert "[project] declares no version" in result.stdout, result.stdout
+
+    def test_declaring_a_version_both_ways_is_reported(self, subject: Callable[..., Subject]) -> None:
+        """PEP 621 forbids it, and the failure mode is that the two disagree silently.
+
+        The backend supplies the dynamic one, so the written string becomes decoration
+        that a reader -- and bump-my-version -- still believes.
+        """
+        manifest = SOUND_PYPROJECT.replace('version = "1.2.3"', 'version = "1.2.3"\ndynamic = ["version"]')
+        repo = subject({"pyproject.toml": manifest, "README.md": "# Demo\n"}, tag="v1.2.3")
+
+        result = repo.run("test_pyproject")
+
+        assert result.returncode != 0
+        assert "both writes `version` and lists it in `dynamic`" in result.stdout, result.stdout
 
 
 class TestTagAgreement:
