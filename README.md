@@ -80,16 +80,13 @@ ships, and the `rhiza-test` job in `.github/workflows/ci.yml` executes it agains
 README — so adding or removing a check without updating the list above turns that job
 red:
 
-```python
-import pkgutil
+```pycon
+>>> import pkgutil
 
-import pytest_rhiza.checks as checks
+>>> import pytest_rhiza.checks as checks
 
-for module in sorted(m.name for m in pkgutil.iter_modules(checks.__path__)):
-    print(module)
-```
-
-```result
+>>> for module in sorted(m.name for m in pkgutil.iter_modules(checks.__path__)):
+...     print(module)
 test_cargo_toml
 test_docstrings
 test_go_module
