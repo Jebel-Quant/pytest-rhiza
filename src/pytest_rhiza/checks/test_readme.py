@@ -11,8 +11,9 @@ this split (#1472) all of it lived in the ``tests`` bundle, which requires
 ``python-core``, so a Rust or Go repo had no README coverage at all.
 
 The Python-block half stays behind in ``tests`` as ``test_readme_validation.py``: it
-executes ``python`` fences and diffs them against a ``result`` block, which only means
-something where the project *is* Python.
+doctests ``pycon`` transcripts (and, for READMEs not yet migrated, runs legacy ``python``
+fences against a ``result`` block), which only means something where the project *is*
+Python.
 
 The fence flag helpers moved to :mod:`pytest_rhiza._fences`, shared with
 ``test_readme_validation``. Upstream they were duplicated because bundles are copied

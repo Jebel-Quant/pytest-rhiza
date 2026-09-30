@@ -8,11 +8,26 @@ themselves; they belong to whoever owns the helper, which is now this package.
 
 from __future__ import annotations
 
+import doctest
+import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from pytest_rhiza import _fences
-from pytest_rhiza._fences import BASH_BLOCK, CODE_BLOCK, bash_usable, classify_bash_blocks, should_skip, skip_reason
+from pytest_rhiza._fences import (
+    BASH_BLOCK,
+    CODE_BLOCK,
+    PyconFence,
+    TranscriptError,
+    bash_usable,
+    classify_bash_blocks,
+    classify_pycon_blocks,
+    pycon_doctest,
+    should_skip,
+    skip_reason,
+)
 
 
 class TestSkipReason:
@@ -139,6 +154,122 @@ class TestSkipFlag:
         executed = [code for flags, code in all_blocks if not should_skip(flags)]
         assert len(executed) == 1
         assert "raise RuntimeError" not in executed[0]
+
+
+class TestClassifyPyconBlocks:
+    """Tests for locating the pycon fences — the convention for runnable README examples."""
+
+    def test_the_line_is_where_the_body_starts(self) -> None:
+        """Zero-based, and the line *after* the opening fence, so doctest's offset adds to it."""
+        doc = "# Title\n\n```pycon\n>>> 1\n1\n```\n"
+        [fence] = classify_pycon_blocks(doc)
+        assert fence.line == 3
+        assert doc.splitlines()[fence.line] == ">>> 1"
+
+    def test_indexes_count_skipped_fences_too(self) -> None:
+        """As for bash: the index is the fence a reader counting from the top would name."""
+        doc = "```pycon +RHIZA_SKIP\n>>> no()\n```\n```pycon\n>>> 1\n1\n```\n"
+        assert [(f.position, f.skipped) for f in classify_pycon_blocks(doc)] == [(0, True), (1, False)]
+
+    def test_an_inline_mention_does_not_open_a_fence(self) -> None:
+        """Prose naming the fence in inline code is not a transcript.
+
+        The regression the anchoring exists for: this package's own README says "a
+        `pycon` fence" in prose, and an unanchored pattern would have opened a fence there
+        and doctested the paragraphs up to the next triple backtick.
+        """
+        doc = "Use a ` ```pycon ` fence, and ` ```python ` too.\n\n```pycon\n>>> 1\n1\n```\n"
+        assert [f.body for f in classify_pycon_blocks(doc)] == [">>> 1\n1\n"]
+
+    def test_an_indented_fence_inside_a_list_item_is_collected(self) -> None:
+        """Markdown indents a fence nested in a list; doctest accepts indented transcripts."""
+        doc = "- step one:\n\n  ```pycon\n  >>> 1 + 1\n  2\n  ```\n"
+        [fence] = classify_pycon_blocks(doc)
+        test = pycon_doctest([fence], "README.md", {})
+        assert [(e.source, e.want) for e in test.examples] == [("1 + 1\n", "2\n")]
+
+    def test_legacy_fences_are_not_collected(self) -> None:
+        """Legacy ``python`` and ``result`` fences stay with the legacy check, so nothing is judged twice."""
+        assert classify_pycon_blocks("```python\nprint(1)\n```\n```result\n1\n```\n") == []
+
+    def test_a_document_with_no_pycon_fences_is_empty(self) -> None:
+        """Not an error — the checks treat it as nothing to run."""
+        assert classify_pycon_blocks("# Title\n\nProse only.\n") == []
+
+    def test_fences_survive_a_json_round_trip(self) -> None:
+        """The executing check ships fences to its child as JSON; they must come back equal."""
+        fences = classify_pycon_blocks("```pycon +RHIZA_SKIP\n>>> 1\n```\n```pycon\n>>> 'x'\n'x'\n```\n")
+        assert [PyconFence(*row) for row in json.loads(json.dumps(fences))] == fences
+
+
+class TestPyconDoctest:
+    """Tests for combining the fences into the one doctest the executing check runs."""
+
+    @staticmethod
+    def _run(test: doctest.DocTest) -> doctest.TestResults:
+        """Run a doctest quietly, with the flags the check uses."""
+        return doctest.DocTestRunner(verbose=False, optionflags=doctest.ELLIPSIS).run(test, out=lambda _text: None)
+
+    def test_fences_share_one_namespace(self) -> None:
+        """A name bound in the first fence is visible in the second, as in the joined script."""
+        doc = "```pycon\n>>> x = 21\n```\n\nprose\n\n```pycon\n>>> x * 2\n42\n```\n"
+        test = pycon_doctest(classify_pycon_blocks(doc), "README.md", {})
+        assert self._run(test) == doctest.TestResults(failed=0, attempted=2)
+
+    def test_line_numbers_are_document_lines(self) -> None:
+        """Each example's line is its line in the README, which is what the report prints.
+
+        The report prints ``test.lineno + example.lineno + 1``; ``test.lineno`` is 0, so the
+        zero-based example line plus one must land on the line holding its prompt.
+        """
+        doc = "# T\n\n```pycon\n>>> a = 1\n```\n\n```pycon\n>>> a\n1\n```\n"
+        test = pycon_doctest(classify_pycon_blocks(doc), "README.md", {})
+        lines = doc.splitlines()
+        assert [lines[e.lineno] for e in test.examples] == [">>> a = 1", ">>> a"]
+        assert test.lineno == 0
+        assert test.filename == "README.md"
+
+    def test_skipped_fences_contribute_nothing(self) -> None:
+        """Not run, and not even parsed — a skipped body may be a malformed transcript."""
+        doc = "```pycon +RHIZA_SKIP\n>>>not even a prompt\n```\n```pycon\n>>> 1\n1\n```\n"
+        test = pycon_doctest(classify_pycon_blocks(doc), "README.md", {})
+        assert [e.source for e in test.examples] == ["1\n"]
+
+    def test_expected_output_ends_at_the_fence_boundary(self) -> None:
+        """A fence ends its last example's output even with no blank line before the next.
+
+        The point of parsing per fence: the closing fence is the boundary, so the next
+        fence's prompt can never be mistaken for expected output of the one before it.
+        """
+        doc = "```pycon\n>>> 1\n1\n```\n```pycon\n>>> 2\n2\n```\n"
+        test = pycon_doctest(classify_pycon_blocks(doc), "README.md", {})
+        assert [e.want for e in test.examples] == ["1\n", "2\n"]
+
+    def test_ellipsis_matches_under_the_checks_flags(self) -> None:
+        """The flag the check passes is what makes an unstable repr documentable."""
+        doc = "```pycon\n>>> object()\n<object object at 0x...>\n```\n"
+        test = pycon_doctest(classify_pycon_blocks(doc), "README.md", {})
+        assert self._run(test) == doctest.TestResults(failed=0, attempted=1)
+
+    def test_a_malformed_prompt_names_fence_and_line(self) -> None:
+        """Doctest's own complaint, led by the fence index and the README line.
+
+        The README line is the fence's start plus doctest's own (one-based) line within the
+        body: the bad prompt is the body's third line, and the body starts on line 3.
+        """
+        doc = "# T\n\n```pycon\n>>> 1\n1\n>>>2\n```\n"
+        with pytest.raises(TranscriptError, match=r"^pycon fence 0 \(README\.md line 6\): .*lacks blank after >>>"):
+            pycon_doctest(classify_pycon_blocks(doc), "README.md", {})
+        assert doc.splitlines()[5] == ">>>2"
+
+    def test_a_transcript_error_is_a_value_error(self) -> None:
+        """Callers already catching doctest's ``ValueError`` keep catching it."""
+        assert issubclass(TranscriptError, ValueError)
+
+    def test_an_unrecognised_parse_message_points_at_the_fence_start(self) -> None:
+        """The line pointer degrades rather than raising if doctest rewords its message."""
+        error = TranscriptError(PyconFence(3, 10, "", False), "README.md", ValueError("reworded"))
+        assert str(error) == "pycon fence 3 (README.md line 11): reworded"
 
 
 def _parses_cleanly(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:

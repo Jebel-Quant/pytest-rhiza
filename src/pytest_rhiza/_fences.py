@@ -14,23 +14,51 @@ shipped into every consumer repository, where they tested template code against 
 They now live in this package's own suite instead.
 
 The regexes and the flag keep their upstream names so the ported checks read as a move.
+
+**The pycon fence is the convention; python + result is legacy.** A runnable README
+example is written as a ```pycon fence holding a doctest transcript — ``>>>`` and ``...``
+prompts with the expected output inline, underneath the statement that produces it. The
+older shape, a ```python fence whose stdout is diffed against a separate ```result fence,
+kept the code and its output apart, so a reader had to match them up by eye and the check
+could only report a drift as "line N of all the results merged". A transcript keeps each
+output next to its cause, and doctest names the exact example that disagreed. Both shapes
+are still parsed here: consumer repositories migrate on their own schedule, and one that
+has not must not go red because this package moved first.
 """
 
 from __future__ import annotations
 
+import doctest
 import functools
 import re
 import subprocess  # nosec B404
+from collections.abc import Sequence
+from typing import NamedTuple
 
 from pytest_rhiza._process import inspect_timeout
 
 # Bash code blocks — captures optional flags (e.g. "+RHIZA_SKIP") and the code body.
 BASH_BLOCK = re.compile(r"```bash([^\n]*)\n(.*?)```", re.DOTALL)
 
-# Python code blocks, same shape.
+# Doctest transcripts — the convention for a runnable README example. Same shape as the
+# others: optional flags after the language, then the body. Written as its own pattern
+# rather than folded into CODE_BLOCK because the two are *judged* differently — a pycon
+# body is a doctest, a python body is a script — and a combined pattern would only move
+# that decision into every caller.
+#
+# Unlike the legacy patterns, both fence lines are anchored to the start of a line (after
+# optional indentation, for a fence inside a list item). Unanchored, prose that *mentions*
+# the fence in inline code — as this package's own README does — would open a "fence" at
+# the mention and run everything up to the next triple backtick as a transcript. The
+# legacy patterns keep their upstream shape so their behaviour does not move under
+# consumers that have not migrated.
+PYCON_BLOCK = re.compile(r"^[ \t]*```pycon([^\n]*)\n(.*?)^[ \t]*```", re.DOTALL | re.MULTILINE)
+
+# Legacy: python code blocks whose stdout is diffed against the ```result fences below.
+# Still collected so a consumer that has not migrated to ```pycon keeps its coverage.
 CODE_BLOCK = re.compile(r"```python([^\n]*)\n(.*?)```", re.DOTALL)
 
-# The ```result fences a python fence's stdout is diffed against.
+# Legacy: the ```result fences a python fence's stdout is diffed against.
 RESULT = re.compile(r"```result\n(.*?)```", re.DOTALL)
 
 # Bash executable used for syntax checking; `bash -n` parses without executing.
@@ -198,3 +226,191 @@ def bash_usable() -> bool:
         # job is to answer "can this platform parse fences at all", and "it hung" is a no.
         return False
     return result.returncode == 0
+
+
+class PyconFence(NamedTuple):
+    """One ```pycon fence, located in its document.
+
+    A named tuple rather than a dataclass for one practical reason: the executing check
+    hands these to a child interpreter as JSON, and a named tuple serialises as a plain
+    list and rebuilds with ``PyconFence(*row)`` — no custom encoder on either side of the
+    process boundary. The one cost of being a tuple is that ``index`` is taken — by
+    ``tuple.index`` — which is why the fence's ordinal is called ``position``.
+
+    Attributes:
+        position: Position among *all* pycon fences, skipped ones included, so a message
+            names the fence a reader counting from the top of the file would name.
+        line: Zero-based line of the document on which the fence *body* starts — the
+            line after the opening ```pycon. Doctest adds its own offset within the body
+            to this, which is what lets a failure report cite a README line number.
+        body: The fence body, verbatim.
+        skipped: True when the opening line carries :data:`SKIP_FLAG`.
+    """
+
+    position: int
+    line: int
+    body: str
+    skipped: bool
+
+
+def classify_pycon_blocks(content: str) -> list[PyconFence]:
+    r"""Return every pycon fence in a markdown document, with where it starts.
+
+    Args:
+        content: The markdown source.
+
+    Returns:
+        One :class:`PyconFence` per fence, in document order.
+
+    Examples:
+        >>> doc = "# Demo\n\n```pycon\n>>> 1 + 1\n2\n```\n\n```pycon +RHIZA_SKIP\n>>> boom()\n```\n"
+        >>> [(f.position, f.line, f.skipped) for f in classify_pycon_blocks(doc)]
+        [(0, 3, False), (1, 8, True)]
+        >>> classify_pycon_blocks(doc)[0].body
+        '>>> 1 + 1\n2\n'
+
+        The flag is honoured exactly as for bash and python fences — anywhere after the
+        language identifier:
+
+        >>> classify_pycon_blocks("```pycon  other +RHIZA_SKIP\n>>> 1\n```\n")[0].skipped
+        True
+
+        A mention in inline code is prose, not a fence:
+
+        >>> [f.line for f in classify_pycon_blocks("Write a ` ```pycon ` fence.\n\n```pycon\n>>> 1\n1\n```\n")]
+        [3]
+
+        Neither legacy shape is collected, so the two checks never judge a fence twice:
+
+        >>> classify_pycon_blocks("```python\nprint(1)\n```\n```result\n1\n```\n")
+        []
+    """
+    return [
+        PyconFence(index, content.count("\n", 0, match.start(2)), match.group(2), should_skip(match.group(1)))
+        for index, match in enumerate(PYCON_BLOCK.finditer(content))
+    ]
+
+
+class TranscriptError(ValueError):
+    """A pycon fence that doctest's parser refuses, located in the document.
+
+    A ``ValueError`` subclass because that is what doctest raises and what a caller
+    catching doctest's own error would already expect; the subclass exists to carry the
+    location. Doctest's message counts lines from the start of the text it was given — a
+    fence body the reader never sees on its own — so the message here leads with the fence
+    index and the README line instead, and keeps doctest's wording after it.
+    """
+
+    def __init__(self, fence: PyconFence, filename: str, error: ValueError) -> None:
+        """Build the message from the fence and doctest's own complaint.
+
+        Args:
+            fence: The fence that failed to parse.
+            filename: What the report calls the document, e.g. ``README.md``.
+            error: The ``ValueError`` doctest's parser raised.
+        """
+        line = fence.line + 1 + _first_offending_line(str(error))
+        super().__init__(f"pycon fence {fence.position} ({filename} line {line}): {error}")
+
+
+def pycon_doctest(fences: Sequence[PyconFence], filename: str, globs: dict[str, object]) -> doctest.DocTest:
+    r"""Build *one* doctest out of every non-skipped pycon fence, in document order.
+
+    **Why one test rather than one per fence.** The legacy check concatenated every python
+    fence into a single script, so an import in the first fence served the examples in the
+    third. READMEs are written that way — set up once, then show things — and splitting
+    the transcript per fence would break every one of them for no gain. So the fences
+    share a namespace, exactly as the joined script did.
+
+    **Why the examples are parsed per fence and then combined, rather than parsing the
+    joined text.** The outcome is the same one doctest over the same examples — a fence
+    boundary ends an example's expected output either way, as a blank line would — but
+    parsing each body separately lets every example's line number be shifted by the line
+    its fence starts on. Doctest's failure report then reads ``File "README.md", line 94``
+    and means line 94 *of the README*, which is the line to fix, instead of a line of an
+    intermediate text the reader has never seen.
+
+    Parsing executes nothing, which is why this is safe to call in-process: the syntax
+    check does exactly that, and only the executing check runs the result — in a child.
+
+    Args:
+        fences: Every pycon fence of the document; the skipped ones contribute nothing.
+        filename: What the report calls the document, e.g. ``README.md``.
+        globs: The namespace the examples run in. The executing check passes
+            ``{"__name__": "__main__"}``, which is what the legacy ``python -c`` script saw.
+
+    Returns:
+        The doctest, ready for :class:`doctest.DocTestRunner`.
+
+    Raises:
+        TranscriptError: A fence is not a well-formed transcript — doctest's own parser
+            refuses, e.g., a prompt with no space after it. The message is doctest's,
+            prefixed with the fence and README line it concerns.
+
+    Examples:
+        >>> fences = [PyconFence(0, 4, ">>> x = 21\n", False), PyconFence(1, 9, ">>> x * 2\n42\n", False)]
+        >>> test = pycon_doctest(fences, "README.md", {})
+        >>> [(e.source, e.want, e.lineno) for e in test.examples]
+        [('x = 21\n', '', 4), ('x * 2\n', '42\n', 9)]
+        >>> doctest.DocTestRunner(verbose=False).run(test)
+        TestResults(failed=0, attempted=2)
+
+        A skipped fence is not parsed at all, so it may hold anything:
+
+        >>> pycon_doctest([PyconFence(0, 0, ">>>broken", True)], "README.md", {}).examples
+        []
+
+        A malformed prompt names the fence and the README line:
+
+        >>> try:
+        ...     pycon_doctest([PyconFence(2, 40, ">>> 1\n>>>2\n", False)], "README.md", {})
+        ... except TranscriptError as error:
+        ...     print(error)
+        pycon fence 2 (README.md line 42): line 2 of the docstring for README.md lacks blank after >>>: '>>>2'
+
+        Printed rather than shown as a traceback because a traceback's first token is the
+        exception's qualified name, which depends on how this module was imported.
+    """
+    parser = doctest.DocTestParser()
+    examples: list[doctest.Example] = []
+    for fence in fences:
+        if fence.skipped:
+            continue
+        try:
+            parsed = parser.get_examples(fence.body, filename)
+        except ValueError as error:
+            # Doctest's own line number is relative to the body; add where the body
+            # starts, so the reader is sent to a line of the file they can open.
+            raise TranscriptError(fence, filename, error) from error
+        for example in parsed:
+            example.lineno += fence.line
+            examples.append(example)
+    docstring = "\n".join(fence.body for fence in fences if not fence.skipped)
+    return doctest.DocTest(examples, globs, filename, filename, 0, docstring)
+
+
+_DOCTEST_LINE = re.compile(r"^line (\d+) of")
+
+
+def _first_offending_line(message: str) -> int:
+    """Return the zero-based body line a doctest parse error names, or 0 if it names none.
+
+    Doctest reports parse errors as ``line N of the docstring for …``, one-based and
+    relative to the text it was given. That wording is doctest's, not a contract, so an
+    unrecognised message degrades to "the fence's first line" rather than raising — the
+    error itself is still shown in full; only the pointer gets coarser.
+
+    Args:
+        message: The text of doctest's ``ValueError``.
+
+    Returns:
+        The zero-based line within the fence body.
+
+    Examples:
+        >>> _first_offending_line("line 3 of the docstring for README.md lacks blank after >>>: '>>>x'")
+        2
+        >>> _first_offending_line("something doctest has never said")
+        0
+    """
+    match = _DOCTEST_LINE.match(message)
+    return int(match.group(1)) - 1 if match else 0
