@@ -1,14 +1,20 @@
 """Subject-repository tests for the two README checks.
 
 ``checks/test_readme.py`` parses ``bash`` fences and never runs them;
-``checks/test_readme_validation.py`` *executes* ``python`` fences and diffs the output
-against the following ``result`` fence. The asymmetry is deliberate in the checks, and
-the tests keep it visible: a bash fence is documentation that must parse, a python fence
-is documentation that must be true.
+``checks/test_readme_validation.py`` *executes* Python examples — ``pycon`` transcripts as
+one doctest, the convention, and legacy ``python`` fences diffed against the following
+``result`` fence. The asymmetry is deliberate in the checks, and the tests keep it
+visible: a bash fence is documentation that must parse, a Python example is documentation
+that must be true.
 
 ``tests/test_checks.py`` already covers the sound and broken bash cases end to end. What
 is here is everything a fence can be *besides* code — skipped, a directory tree, all
-comments — plus the whole of the python-fence half.
+comments — plus the whole of the Python half, in both its shapes.
+
+``test_readme_validation`` holds four tests — pycon run, pycon parse, legacy run, legacy
+compile — and every one of them passes on a README with nothing for it to do. So a count
+of ``4 passed`` below means "the shape under test was judged and the other shape found
+nothing", which is why the counts are asserted rather than just the exit status.
 """
 
 from __future__ import annotations
@@ -146,7 +152,7 @@ class TestPythonFenceExecution:
         result = repo.run("test_readme_validation")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "2 passed" in result.stdout, result.stdout
+        assert "4 passed" in result.stdout, result.stdout
 
     def test_output_disagreeing_with_the_result_block_is_reported(self, subject: Callable[..., Subject]) -> None:
         """A documented result that the code no longer produces is the defect this catches."""
@@ -278,10 +284,257 @@ class TestPythonFenceExecution:
         assert "+RHIZA_SKIP" in result.stdout, result.stdout
 
     def test_a_readme_with_no_python_fences_passes(self, subject: Callable[..., Subject]) -> None:
-        """Nothing to execute is not a defect; the empty code and result strings agree."""
+        """Nothing to execute is not a defect; the empty code and result strings agree.
+
+        All four tests pass rather than skip — the pycon pair finds no fences either — and
+        that is the property ``rhiza-test``'s skip guard (#34) depends on.
+        """
         repo = subject({"README.md": "# Demo\n\nProse only.\n"}, tag="v1.2.3")
 
         result = repo.run("test_readme_validation")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "2 passed" in result.stdout, result.stdout
+        assert "4 passed" in result.stdout, result.stdout
+        assert "skipped" not in result.stdout, result.stdout
+
+
+class TestPyconFenceExecution:
+    """The convention: every ``pycon`` fence runs as one doctest, in a child interpreter."""
+
+    def test_a_transcript_that_holds_passes(self, subject: Callable[..., Subject]) -> None:
+        """The reference case: a statement, its inline output, and a multi-line block."""
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> 1 + 1
+        2
+        >>> for word in ["a", "b"]:
+        ...     print(word)
+        a
+        b
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "4 passed" in result.stdout, result.stdout
+
+    def test_wrong_expected_output_is_reported_with_doctests_own_report(self, subject: Callable[..., Subject]) -> None:
+        """A drifted transcript fails, and the message is doctest's report of it.
+
+        What the reader needs is which example, where, and expected against actual — all of
+        which doctest already says, so the check shows its report rather than paraphrasing
+        it. The line number is asserted as a *README* line: the fence body starts on line 4
+        and the drifted example is its second, so line 5 is the one to open. ``--tb=long``
+        because the harness default shows only a failure's first line.
+        """
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> x = 2
+        >>> x * 21
+        41
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation", args=("--tb=long",))
+
+        assert result.returncode != 0
+        assert "1 failed" in result.stdout, result.stdout
+        assert "README pycon fences failed as a doctest" in result.stdout, result.stdout
+        assert 'File "README.md", line 5' in result.stdout, result.stdout
+        assert "x * 21" in result.stdout, result.stdout
+        assert "Expected:" in result.stdout, result.stdout
+        assert "41" in result.stdout, result.stdout
+        assert "Got:" in result.stdout, result.stdout
+        assert "42" in result.stdout, result.stdout
+
+    def test_a_skipped_fence_is_never_run_or_parsed(self, subject: Callable[..., Subject]) -> None:
+        """``+RHIZA_SKIP`` works as for every other fence — the body could not even parse."""
+        readme = """
+        # Demo
+
+        ```pycon +RHIZA_SKIP
+        >>>raise RuntimeError("this fence must never run")
+        ```
+
+        ```pycon
+        >>> print("ran")
+        ran
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "4 passed" in result.stdout, result.stdout
+
+    def test_ellipsis_is_enabled(self, subject: Callable[..., Subject]) -> None:
+        """``...`` in expected output matches anything, with no per-example directive.
+
+        The case it exists for: an address, a timestamp or a path that differs on every run
+        and is not what the example is documenting.
+        """
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> object()
+        <object object at 0x...>
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "4 passed" in result.stdout, result.stdout
+
+    def test_fences_share_one_namespace_and_run_as_main(self, subject: Callable[..., Subject]) -> None:
+        """A name bound in one fence is visible in the next, as it was in the joined script.
+
+        Prose between the fences, and a skipped fence in the middle, must not break the
+        chain. ``__name__`` is checked too, since the legacy script ran as ``__main__`` and
+        an example guarded on it would silently stop printing if that changed.
+        """
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> import math
+        >>> radius = 2
+        ```
+
+        Some prose in between.
+
+        ```pycon +RHIZA_SKIP
+        >>> radius = "not a number"
+        ```
+
+        ```pycon
+        >>> round(math.pi * radius**2, 2)
+        12.57
+        >>> __name__
+        '__main__'
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "4 passed" in result.stdout, result.stdout
+
+    def test_examples_run_in_the_repository_root(self, subject: Callable[..., Subject]) -> None:
+        """The child's working directory is the subject, so a README may read its own files."""
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> from pathlib import Path
+        >>> Path("data.txt").read_text().strip()
+        'from the repository'
+        ```
+        """
+        repo = subject({"README.md": readme, "data.txt": "from the repository\n"}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "4 passed" in result.stdout, result.stdout
+
+    def test_a_malformed_prompt_is_reported_with_its_readme_line(self, subject: Callable[..., Subject]) -> None:
+        """Doctest refusing the transcript is named by fence and README line.
+
+        Both pycon tests fail: the parse check with the located message, and the run,
+        whose child dies on the same parse before it can report — which is why the run
+        falls back to showing stderr rather than an empty report.
+        """
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> 1
+        1
+        >>>2
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation", args=("--tb=long",))
+
+        assert result.returncode != 0
+        assert "2 failed" in result.stdout, result.stdout
+        assert "not a valid doctest transcript: pycon fence 0 (README.md line 6)" in result.stdout, result.stdout
+        assert "lacks blank after >>>" in result.stdout, result.stdout
+
+    def test_an_example_that_does_not_compile_is_reported(self, subject: Callable[..., Subject]) -> None:
+        """A well-formed prompt holding invalid Python is a syntax error, named by line."""
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> def broken(:
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode != 0
+        assert "README.md line 4 (pycon example) has syntax error" in result.stdout, result.stdout
+
+    def test_a_transcript_that_never_terminates_is_killed(self, subject: Callable[..., Subject]) -> None:
+        """The pycon run shares the execute budget (#44), and says how to get out of it."""
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> import time
+        >>> time.sleep(60)
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation", env={"RHIZA_EXECUTE_TIMEOUT": "2"})
+
+        assert result.returncode != 0
+        assert "Killed after 2s" in result.stdout, result.stdout
+        assert "```pycon +RHIZA_SKIP```" in result.stdout, result.stdout
+
+    def test_a_readme_with_both_shapes_has_both_checked(self, subject: Callable[..., Subject]) -> None:
+        """A half-migrated README keeps its legacy coverage while it gains the new one.
+
+        The legacy fence here is wrong, so a green run would mean the pycon check had
+        swallowed it; exactly one failure means each shape was judged by its own test.
+        """
+        readme = """
+        # Demo
+
+        ```pycon
+        >>> 6 * 7
+        42
+        ```
+
+        ```python
+        print("legacy")
+        ```
+
+        ```result
+        stale
+        ```
+        """
+        repo = subject({"README.md": readme}, tag="v1.2.3")
+
+        result = repo.run("test_readme_validation")
+
+        assert result.returncode != 0
+        assert "1 failed, 3 passed" in result.stdout, result.stdout
+        # The legacy check's own message, so the one failure is attributed to it.
+        assert "README output does not match its documented result" in result.stdout, result.stdout

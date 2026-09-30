@@ -2,7 +2,8 @@
 
 **Why every child needs an explicit timeout (#44).** The checks shell out for four
 things: git queries, ``bash -n`` fence parsing, the ``bash`` probe, and — the one that
-matters — executing the ``python`` fences out of a consumer's README. None of those calls
+matters — executing the ``python`` fences out of a consumer's README (and, since the
+fleet moved to doctest transcripts, its ``pycon`` fences, which share the same budget). None of those calls
 carried a ``timeout`` before, so a fence that waits on ``input()``, blocks on a network
 call, or loops forever made the check *hang* rather than fail.
 
@@ -52,7 +53,8 @@ GIT = shutil.which("git") or "/usr/bin/git"
 INSPECT_TIMEOUT = 30
 INSPECT_TIMEOUT_ENV = "RHIZA_INSPECT_TIMEOUT"
 
-# The one process that executes documentation: a README's python fences.
+# The processes that execute documentation: a README's pycon transcripts, and its legacy
+# python fences.
 EXECUTE_TIMEOUT = 120
 EXECUTE_TIMEOUT_ENV = "RHIZA_EXECUTE_TIMEOUT"
 
@@ -117,7 +119,7 @@ def inspect_timeout() -> int:
 
 
 def execute_timeout() -> int:
-    """Return the budget for the child that executes a README's python fences.
+    """Return the budget for a child that executes a README's pycon or python fences.
 
     Returns:
         Seconds, from :data:`EXECUTE_TIMEOUT_ENV` or :data:`EXECUTE_TIMEOUT`.

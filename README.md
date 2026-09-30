@@ -96,6 +96,27 @@ test_readme_validation
 test_release_tags
 ```
 
+### README examples are doctest transcripts
+
+`test_readme_validation` runs a README's Python examples. The convention is a
+`pycon` fence holding a doctest transcript: `>>>` and `...` prompts, with the
+expected output written inline under the statement that produces it, as in the fence
+above. Every such fence in `README.md` runs as **one** doctest, so a name bound in one
+fence is still bound in the next. `ELLIPSIS` is on, and `__name__` is `"__main__"`. The
+doctest runs in a child interpreter from the repository root, with the same time limit
+as any other executed example (`RHIZA_EXECUTE_TIMEOUT`, default 120s). If an example
+fails, the report is doctest's own: the README line, the example, what was expected and
+what came out. A fence that is not a well-formed transcript, or not valid Python, fails
+a separate parse check. Add `+RHIZA_SKIP` after the language on the opening line to
+exclude a fence, exactly as for `bash` and `python` fences.
+
+The older shape still works, so a repository that has not converted stays green: a
+`python` fence run as a script, with its stdout diffed against the `result` fences.
+Every python fence is joined into one script and every result fence into one expected
+text, so a mismatch can only be reported as a line of that joined text. That is why new
+examples should be transcripts. A README with neither shape passes both checks, with no
+skip: having nothing to run is not a defect.
+
 ### Which repository is "root"
 
 The one deliberate behaviour change from the synced suite. `.rhiza/tests/conftest.py`
