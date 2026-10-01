@@ -195,8 +195,9 @@ mode (#34) is the one this suite is most careful about.
   install, which finds the marker in `src` whether or not the wheel would ship it.
 - **Nothing here invokes `jebel-quant/rhiza`.** That repo pins pytest-rhiza as a dependency,
   so calling its reusable CI would close a cycle — rhiza's workflow running the gates that
-  judge the package rhiza depends on. `rhiza_release.yml` is the one exception, synced
-  verbatim because PyPI Trusted Publishing validates the exact workflow path. `codeql.yml`
+  judge the package rhiza depends on. `rhiza_release.yml` is the one exception, kept at
+  the exact path PyPI Trusted Publishing validates — the path, not the contents, so its
+  `uses:` lines are SHA-pinned like everything else (#103). `codeql.yml`
   and `scorecard.yml` (#86) are the shape a restored scanner takes: the first-party action
   called directly, never rhiza's reusable wrapper, so the scanning returns without the edge
   #52 removed.

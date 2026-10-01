@@ -356,8 +356,9 @@ Both layers are gone, because the dependency direction made the first one a cycl
 running the gates that judge the package rhiza depends on. Every other consumer gets a
 one-way edge; this one got a loop.
 
-One rhiza workflow stays: `rhiza_release.yml`, synced verbatim, because PyPI Trusted
-Publishing validates the exact workflow path. The `rhiza_codeql.yml` and
+One rhiza workflow stays: `rhiza_release.yml`, at the exact path PyPI Trusted Publishing
+validates. It checks the path, not the contents, so the file's `uses:` lines are SHA-pinned
+like every other workflow's (#103). The `rhiza_codeql.yml` and
 `rhiza_scorecard.yml` stubs are gone — they called rhiza's reusable CodeQL and OSSF
 Scorecard workflows, a pinned edge to keep current for scanning this repository does not
 depend on.
