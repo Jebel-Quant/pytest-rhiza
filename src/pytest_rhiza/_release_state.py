@@ -49,8 +49,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pytest_rhiza._process import _budget, git
-from pytest_rhiza._versions import _as_version
+from pytest_rhiza._process import budget, git
+from pytest_rhiza._versions import as_version
 
 __all__ = ["assert_release_not_stalled", "grace_days", "stalled_for"]
 
@@ -67,14 +67,14 @@ def grace_days() -> int:
 
     Overridable for a project whose release cadence is genuinely slower than the default
     assumes — the same knob, and the same reasoning, as the timeouts in
-    :mod:`pytest_rhiza._process`, whose :func:`~pytest_rhiza._process._budget` this reuses
+    :mod:`pytest_rhiza._process`, whose :func:`~pytest_rhiza._process.budget` this reuses
     rather than re-implementing "a positive integer from the environment, or a default"
     a second time.
 
     Returns:
         Seconds' worth of days, from :data:`GRACE_DAYS_ENV` or :data:`DEFAULT_GRACE_DAYS`.
     """
-    return _budget(GRACE_DAYS_ENV, DEFAULT_GRACE_DAYS)
+    return budget(GRACE_DAYS_ENV, DEFAULT_GRACE_DAYS)
 
 
 def default_branch(root: Path) -> str | None:
@@ -193,8 +193,8 @@ def _stalled_release(
         either version is malformed, no release is in flight, git cannot name the default
         branch, the bump is not on it, or its date cannot be read.
     """
-    tag_version = _as_version(latest_tag.lstrip("v"))
-    declared_version = _as_version(declared)
+    tag_version = as_version(latest_tag.lstrip("v"))
+    declared_version = as_version(declared)
     if tag_version is None or declared_version is None:
         return None  # malformed; assert_declared_version_not_behind_tag reports it
     if declared_version <= tag_version:

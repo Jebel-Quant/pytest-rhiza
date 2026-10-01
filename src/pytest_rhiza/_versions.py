@@ -44,10 +44,10 @@ from __future__ import annotations
 
 from packaging.version import InvalidVersion, Version
 
-__all__ = ["assert_declared_version_not_behind_tag"]
+__all__ = ["as_version", "assert_declared_version_not_behind_tag"]
 
 
-def _as_version(value: str) -> Version | None:
+def as_version(value: str) -> Version | None:
     """Return ``value`` parsed, or ``None`` when it is not a version.
 
     Split out so the caller can report a malformed version through ``assert`` like
@@ -61,9 +61,9 @@ def _as_version(value: str) -> Version | None:
         The parsed version, or ``None`` if it does not parse.
 
     Examples:
-        >>> _as_version("1.2.3")
+        >>> as_version("1.2.3")
         <Version('1.2.3')>
-        >>> _as_version("not-a-version") is None
+        >>> as_version("not-a-version") is None
         True
     """
     try:
@@ -123,10 +123,10 @@ def assert_declared_version_not_behind_tag(
         ...     print(str(exc).split(";")[0])
         Declared version '0.2.2' in pyproject.toml is behind the newest git tag 'v0.3.0'
     """
-    tag_version = _as_version(latest_tag.lstrip("v"))
+    tag_version = as_version(latest_tag.lstrip("v"))
     assert tag_version is not None, f"Latest git tag {latest_tag!r} is not a valid version"
 
-    declared_version = _as_version(declared)
+    declared_version = as_version(declared)
     assert declared_version is not None, f"Declared version {declared!r} in {location} is not a valid version"
 
     assert declared_version >= tag_version, (

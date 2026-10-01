@@ -59,7 +59,7 @@ EXECUTE_TIMEOUT = 120
 EXECUTE_TIMEOUT_ENV = "RHIZA_EXECUTE_TIMEOUT"
 
 
-def _budget(name: str, default: int) -> int:
+def budget(name: str, default: int) -> int:
     """Return the timeout named by an environment variable, or ``default``.
 
     A value that is not a positive integer falls back to the default rather than raising.
@@ -79,23 +79,23 @@ def _budget(name: str, default: int) -> int:
         Unset means the default:
 
         >>> import os
-        >>> _budget("RHIZA_BUDGET_EXAMPLE", 30)
+        >>> budget("RHIZA_BUDGET_EXAMPLE", 30)
         30
 
         A positive integer wins:
 
         >>> os.environ["RHIZA_BUDGET_EXAMPLE"] = "5"
-        >>> _budget("RHIZA_BUDGET_EXAMPLE", 30)
+        >>> budget("RHIZA_BUDGET_EXAMPLE", 30)
         5
 
         Anything else falls back, rather than raising or disabling the bound — a typo and
         a deliberate zero are both refused:
 
         >>> os.environ["RHIZA_BUDGET_EXAMPLE"] = "soon"
-        >>> _budget("RHIZA_BUDGET_EXAMPLE", 30)
+        >>> budget("RHIZA_BUDGET_EXAMPLE", 30)
         30
         >>> os.environ["RHIZA_BUDGET_EXAMPLE"] = "0"
-        >>> _budget("RHIZA_BUDGET_EXAMPLE", 30)
+        >>> budget("RHIZA_BUDGET_EXAMPLE", 30)
         30
         >>> del os.environ["RHIZA_BUDGET_EXAMPLE"]
     """
@@ -115,7 +115,7 @@ def inspect_timeout() -> int:
     Returns:
         Seconds, from :data:`INSPECT_TIMEOUT_ENV` or :data:`INSPECT_TIMEOUT`.
     """
-    return _budget(INSPECT_TIMEOUT_ENV, INSPECT_TIMEOUT)
+    return budget(INSPECT_TIMEOUT_ENV, INSPECT_TIMEOUT)
 
 
 def execute_timeout() -> int:
@@ -124,7 +124,7 @@ def execute_timeout() -> int:
     Returns:
         Seconds, from :data:`EXECUTE_TIMEOUT_ENV` or :data:`EXECUTE_TIMEOUT`.
     """
-    return _budget(EXECUTE_TIMEOUT_ENV, EXECUTE_TIMEOUT)
+    return budget(EXECUTE_TIMEOUT_ENV, EXECUTE_TIMEOUT)
 
 
 def run(
