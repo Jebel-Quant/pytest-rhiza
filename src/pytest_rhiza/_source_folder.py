@@ -56,7 +56,7 @@ def read_rhiza_env(path: Path) -> dict[str, str]:
     implements, and it is the whole grammar this rung has ever needed.
 
     A line that does not parse is skipped rather than raised on, for the same reason
-    ``_budget`` in :mod:`pytest_rhiza._process` falls back instead of raising: this is a
+    ``budget`` in :mod:`pytest_rhiza._process` falls back instead of raising: this is a
     compatibility path into a file the current toolchain no longer writes, and a stray
     line in it must not be able to fail every check in the repository.
 

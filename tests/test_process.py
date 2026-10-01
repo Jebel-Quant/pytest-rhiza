@@ -7,7 +7,7 @@ child outliving its budget is killed and reported, and that the budget is a numb
 environment can move — which is what makes the kill path testable in the first place, and
 therefore what stops this from being a safety net nobody has ever seen work.
 
-``_budget``'s precedence is doctested where it lives, so it is not re-asserted here. Its
+``budget``'s precedence is doctested where it lives, so it is not re-asserted here. Its
 *refusals* are, because those are a safety property rather than documentation: a malformed
 override must not be able to remove the bound the module exists to provide.
 """
