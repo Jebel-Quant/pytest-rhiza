@@ -174,12 +174,13 @@ mode (#34) is the one this suite is most careful about.
   is therefore opted out of in `[tool.check_test_layout]` with a recorded reason; tests are
   organised by behaviour in `tests/` instead.
 - **Docstring coverage is 100% over `src` *and* `tests`** — a test whose name is its only
-  explanation is what that bar exists to prevent. Docstrings here carry real doctests (96 of
-  them — 90 under `src`, 6 in `scripts/gates.py`); `_resolve_root` documents its ladder by
-  example precisely because a fixture needs a live session to exercise. The doctest gate
-  walks both folders since #81; before that an example under `scripts/` would have been
-  collected by nothing, and `test_doctests` *skips* rather than fails when it attempts
-  none.
+  explanation is what that bar exists to prevent. Docstrings here carry real doctests,
+  under `src` and in `scripts/gates.py`; `_resolve_root` documents its ladder by example
+  precisely because a fixture needs a live session to exercise. No count is written here:
+  nothing bumps one, so it would rot the way the README's version literal did (#17, #105).
+  The doctest gate walks both folders since #81; before that an example under `scripts/`
+  would have been collected by nothing, and `test_doctests` *skips* rather than fails when
+  it attempts none.
 - **Version numbers live in exactly two places**, kept in step by
   `[[tool.bumpversion.files]]`: `[project].version` (read natively) and
   `pytest_rhiza.__version__`. `tests/test_version.py` asserts both that they agree and that
