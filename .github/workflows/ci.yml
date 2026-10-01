@@ -45,9 +45,9 @@ name: CI
 # scanning this repository does not depend on: no rhiza_*.yml stub is left that calls a
 # reusable workflow parameterised by this package.
 #
-# `rhiza_release.yml` stays unpinned and unedited: it is synced verbatim because PyPI
-# Trusted Publishing validates the exact workflow path, so its `uses:` lines are
-# upstream's text, not ours. That half remains Jebel-Quant/rhiza#1577.
+# `rhiza_release.yml` keeps the exact path PyPI Trusted Publishing validates, but its
+# `uses:` lines are SHA-pinned like these (#103): Trusted Publishing checks the workflow's
+# path and repository, not its contents, and nothing re-syncs the file here anyway.
 
 on:
   push:
