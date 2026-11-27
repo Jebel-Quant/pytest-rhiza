@@ -245,13 +245,19 @@ jobs:
           enable-cache: true
 
       # The other half of `security`: bandit scans *our* source for insecure patterns and
-      # never looks at what we depend on. pip-audit resolves the locked environment and
-      # checks it against the advisory database. It matters more here than in most
-      # projects, because pytest-rhiza is a runtime dependency of every rhiza-managed
-      # repo, so a vulnerable transitive dependency propagates into every consumer's test
+      # never looks at what we depend on. pip-audit checks the installed environment
+      # against the advisory database. It matters more here than in most projects,
+      # because pytest-rhiza is a runtime dependency of every rhiza-managed repo, so a
+      # vulnerable transitive dependency propagates into every consumer's test
       # environment.
+      #
+      # `uv run --with`, the same form as the license gate, and never bare `uvx`: with no
+      # arguments pip-audit audits the interpreter it runs in, and under `uvx` that is an
+      # isolated environment holding only pip-audit itself — this job audited its own
+      # tool, not the locked dependencies, until #118. `uv run` syncs the project
+      # environment from uv.lock first, so that is what gets audited.
       - name: Audit dependencies
-        run: uvx pip-audit
+        run: uv run --with pip-audit pip-audit
 
   lowest-deps:
     name: Lowest-direct dependency compatibility

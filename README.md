@@ -280,7 +280,7 @@ uvx deptry src
 # security
 uvx bandit -r src scripts -ll -q
 # audit
-uvx pip-audit
+uv run --with pip-audit pip-audit
 # license
 uv run --with pip-licenses pip-licenses --allow-only "MIT;MIT License;BSD-2-Clause;BSD-3-Clause;Apache-2.0;Apache-2.0 OR BSD-2-Clause;DFSG approved"
 # test
