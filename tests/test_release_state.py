@@ -85,10 +85,27 @@ class TestDefaultBranch:
         assert default_branch(repo.path) == "origin/main"
 
     def test_a_repository_without_a_remote_answers_none(self, subject: Callable[..., Subject]) -> None:
-        """`git init` writes no origin/HEAD, and that is unjudgeable rather than wrong."""
+        """`git init` writes no remote-tracking refs at all, and that is unjudgeable."""
         repo = subject({"pyproject.toml": PYPROJECT}, tag="v0.4.0")
 
         assert default_branch(repo.path) is None
+
+    @pytest.mark.parametrize("name", ["main", "master"])
+    def test_a_ci_checkout_without_origin_head_falls_back(self, subject: Callable[..., Subject], name: str) -> None:
+        """`actions/checkout` writes `origin/<branch>` but never `origin/HEAD` (#117)."""
+        repo = subject({"pyproject.toml": PYPROJECT}, tag="v0.4.0")
+        repo.git("update-ref", f"refs/remotes/origin/{name}", "HEAD")
+
+        assert default_branch(repo.path) == f"origin/{name}"
+
+    def test_origin_head_outranks_the_fallback(self, subject: Callable[..., Subject]) -> None:
+        """A clone's own answer wins over a guessed name, so a `develop` default holds."""
+        repo = subject({"pyproject.toml": PYPROJECT}, tag="v0.4.0")
+        repo.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        repo.git("update-ref", "refs/remotes/origin/develop", "HEAD")
+        repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+
+        assert default_branch(repo.path) == "origin/develop"
 
 
 class TestMergedBumpDate:
@@ -170,12 +187,33 @@ class TestAssertReleaseNotStalled:
         # origin/main still points at the seed commit, so 0.5.0 is not merged.
         assert_release_not_stalled(repo.path, "v0.4.0", "0.5.0", manifest="pyproject.toml", now=later)
 
-    def test_a_repository_without_origin_head_is_quiet(self, subject: Callable[..., Subject]) -> None:
-        """With no default branch, "merged" has no meaning and there is nothing to judge."""
+    def test_a_stall_in_a_ci_checkout_fails(self, subject: Callable[..., Subject]) -> None:
+        """The #117 shape: `origin/main` but no `origin/HEAD`, as `actions/checkout` leaves it.
+
+        Until #117 this returned quietly, so the check passed on every CI run while
+        pytest-rhiza's own 0.7.1 sat untagged for 24 days.
+        """
+        repo = subject({"pyproject.toml": PYPROJECT}, tag="v0.4.0")
+        repo.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        later = datetime.now(UTC) + timedelta(days=10)
+
+        with pytest.raises(AssertionError, match="merged into origin/main for 10 days"):
+            assert_release_not_stalled(repo.path, "v0.4.0", "0.4.1", manifest="pyproject.toml", now=later)
+
+    def test_no_default_branch_while_in_flight_skips_rather_than_passes(self, subject: Callable[..., Subject]) -> None:
+        """Nothing to judge is a skip, which the no-skip guard can see; a return was not (#117)."""
         repo = subject({"pyproject.toml": PYPROJECT}, tag="v0.4.0")
         later = datetime.now(UTC) + timedelta(days=10)
 
-        assert_release_not_stalled(repo.path, "v0.4.0", "0.4.1", manifest="pyproject.toml", now=later)
+        with pytest.raises(pytest.skip.Exception, match="cannot name the default branch"):
+            assert_release_not_stalled(repo.path, "v0.4.0", "0.4.1", manifest="pyproject.toml", now=later)
+
+    def test_no_default_branch_in_the_steady_state_is_still_quiet(self, subject: Callable[..., Subject]) -> None:
+        """With no release in flight there is nothing to judge, so no skip: most repos live here."""
+        repo = subject({"pyproject.toml": PYPROJECT}, tag="v0.4.1")
+        later = datetime.now(UTC) + timedelta(days=10)
+
+        assert_release_not_stalled(repo.path, "v0.4.1", "0.4.1", manifest="pyproject.toml", now=later)
 
     def test_a_malformed_version_is_left_to_the_other_assertion(self, subject: Callable[..., Subject]) -> None:
         """`assert_declared_version_not_behind_tag` reports these; two reports is noise."""

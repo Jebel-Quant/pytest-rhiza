@@ -138,9 +138,13 @@ Two of them encode non-obvious decisions:
   tagged and never published kept every gate green. This package sat in that state for
   three and a half days while `rhiza-test` reported `34 passed, 0 skipped`. The check fires
   only once the bump is on the **default branch** (an open release PR is not a stall) and
-  older than `RHIZA_RELEASE_GRACE_DAYS`, default 3. Everything git cannot answer — shallow
-  clone, no `origin/HEAD`, a version the pickaxe cannot find — is a return, not a failure:
-  reporting those as red would mirror the #34 defect it exists to catch.
+  older than `RHIZA_RELEASE_GRACE_DAYS`, default 3. A bump the pickaxe cannot find on the
+  default branch is a return (an open release PR looks exactly like that); a default branch
+  git cannot name at all is a **skip** — never red, which would mirror #34, and never a
+  return either (#117). `actions/checkout` writes no `origin/HEAD`, so `default_branch`
+  falls back to `origin/main`/`origin/master`; before that, the return meant the check
+  judged nothing in any CI and read as passed, which is how 0.7.1 sat untagged for 24 days
+  under a green `rhiza-test`.
 
 ## Testing model
 

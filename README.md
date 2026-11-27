@@ -204,9 +204,12 @@ genuinely slower raises it:
 RHIZA_RELEASE_GRACE_DAYS=30 uvx rhiza-task rhiza-test
 ```
 
-Everything git cannot answer is a skip rather than a failure: a shallow clone, a checkout
-with no `origin/HEAD`, a manifest the version was never written into. None of those mean
-the release stalled, they mean the check has no subject.
+The default branch is read from `origin/HEAD`, falling back to `origin/main` and then
+`origin/master` — `actions/checkout` never writes `origin/HEAD`, so without the fallback
+the check could not run in CI at all (#117). When git can name none of them while a
+release is in flight, the check **skips** rather than fails or passes: nothing was judged,
+and a skip is what a no-skip guard can see. A bump that is not on the default branch yet —
+an open release PR — is quiet, not skipped.
 
 ## Two things that were decided
 

@@ -34,10 +34,19 @@ normal window and would fail the release's own required checks. The bound has to
 enough to be uninteresting during a healthy release and tight enough that a stalled one
 cannot hide behind it.
 
-**Everything git cannot answer is a skip, not a failure.** A shallow clone, a repository
-with no ``origin/HEAD``, a manifest the pickaxe cannot find the version in — none of those
-mean the release stalled, they mean this check has no subject. Reporting them as failures
-would be the mirror of the defect it exists to catch.
+**What git cannot answer is never a failure — and never a silent pass either.** A
+repository with no default branch git can name means this check has no subject, and
+reporting it as red would be the mirror of the defect it exists to catch. But until #117
+that case *returned*, which a test runner records as a pass: ``actions/checkout`` writes
+no ``origin/HEAD``, so in CI the check judged nothing on every run while reading green,
+and the no-skip guard that exists for exactly this (#34) could not see it. It is a
+``pytest.skip`` now, and :func:`default_branch` falls back to ``origin/main`` and
+``origin/master`` so that an ordinary CI checkout has a subject at all.
+
+The other quiet states are verdicts rather than gaps, and stay quiet: no release in
+flight, a bump not yet on the default branch (an open release PR, which a shallow clone
+also looks like), and a malformed version, which
+:func:`~pytest_rhiza._versions.assert_declared_version_not_behind_tag` reports.
 
 Security Notes:
 - S101 (assert usage): Asserts are appropriate in test code for validating conditions
@@ -48,6 +57,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from pytest_rhiza._process import budget, git
 from pytest_rhiza._versions import as_version
@@ -80,20 +91,32 @@ def grace_days() -> int:
 def default_branch(root: Path) -> str | None:
     """Return the default branch as a remote-tracking ref, or None if git cannot say.
 
-    ``origin/HEAD`` is what names the default branch locally, and it is absent often
-    enough to matter: a bare ``git clone`` sets it, ``actions/checkout`` does not always,
-    and a repository with no remote never has one. Absent means unjudgeable.
+    ``origin/HEAD`` is what names the default branch locally, and it is the first answer
+    taken. It is also absent exactly where this check matters most: a ``git clone`` sets
+    it, but ``actions/checkout`` never does — it initialises a repository and fetches into
+    it — so in CI the lookup failed on every run and the check never judged anything
+    (#117). This package's own 0.7.1 sat untagged for 24 days behind that while CI reported
+    the assertion as passed.
+
+    So when ``origin/HEAD`` is absent, an existing ``origin/main`` and then
+    ``origin/master`` are taken instead: the two names a default branch has in practice,
+    and the ref ``actions/checkout`` does write for a push to either. A project whose
+    default is named otherwise *and* whose checkout has no ``origin/HEAD`` still answers
+    None, which the caller reports as a skip rather than a pass.
 
     Args:
         root: Repository to ask.
 
     Returns:
-        Something like ``origin/main``, or None when there is no ``origin/HEAD``.
+        Something like ``origin/main``, or None when git can name no default branch.
     """
     result = git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    for name in ("main", "master"):
+        if git(root, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}").returncode == 0:
+            return f"origin/{name}"
+    return None
 
 
 def merged_bump_date(root: Path, branch: str, manifest: str, declared: str) -> str | None:
@@ -176,9 +199,11 @@ def _stalled_release(
 ) -> tuple[str, int] | None:
     """Return the default branch and how long the bump has sat on it, or None to say nothing.
 
-    Every rung that cannot be established returns None rather than raising, so
+    Every rung that settles the question returns None, so
     :func:`assert_release_not_stalled` is left holding one decision — fail or not — and
-    this function holds the four ways there is nothing to decide. Split out at CC 9,
+    this function holds the ways there is nothing to decide. The one rung that *cannot*
+    be established — no default branch while a release is in flight — skips instead,
+    because returning there was indistinguishable from a pass (#117). Split out at CC 9,
     under the bar #87 set for this repository.
 
     Args:
@@ -190,8 +215,12 @@ def _stalled_release(
 
     Returns:
         The default branch and whole days since the bump merged into it, or None when
-        either version is malformed, no release is in flight, git cannot name the default
-        branch, the bump is not on it, or its date cannot be read.
+        either version is malformed, no release is in flight, the bump is not on the
+        default branch, or its date cannot be read.
+
+    Raises:
+        pytest.skip.Exception: When a release is in flight and git cannot name the
+            default branch, so nothing can be judged.
     """
     tag_version = as_version(latest_tag.lstrip("v"))
     declared_version = as_version(declared)
@@ -202,7 +231,14 @@ def _stalled_release(
 
     branch = default_branch(root)
     if branch is None:
-        return None  # no origin/HEAD, so "merged" has no meaning here
+        # A release *is* in flight and git cannot say whether it merged. Returning here
+        # read as a pass, which the no-skip guard cannot see — the #34 shape that kept
+        # #117 green. A skip says honestly that nothing was judged.
+        pytest.skip(
+            f"Version {declared!r} is ahead of the newest tag {latest_tag!r}, but git cannot "
+            "name the default branch (no origin/HEAD, origin/main or origin/master), so "
+            "whether the release stalled cannot be judged."
+        )
 
     committed = merged_bump_date(root, branch, manifest, declared)
     if committed is None:
@@ -224,9 +260,10 @@ def assert_release_not_stalled(
 ) -> None:
     """Assert a version ahead of the newest tag is a release in flight, not an abandoned one.
 
-    The four states in which there is nothing to judge are :func:`_stalled_release`'s
-    business and all of them return quietly; see the module docstring for why none of them
-    is a failure. What is left here is the one comparison that can fail.
+    The states in which there is nothing to judge are :func:`_stalled_release`'s business:
+    the settled ones return quietly and the unanswerable one skips; see the module
+    docstring for why none of them is a failure. What is left here is the one comparison
+    that can fail.
 
     Args:
         root: The repository under test.
@@ -240,6 +277,8 @@ def assert_release_not_stalled(
     Raises:
         AssertionError: If the bump merged into the default branch more than
             :func:`grace_days` days ago and no tag names the version it declared.
+        pytest.skip.Exception: If a release is in flight and git cannot name the default
+            branch to judge it against.
     """
     state = _stalled_release(
         root,
