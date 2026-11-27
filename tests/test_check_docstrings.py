@@ -9,8 +9,10 @@ this file existed:
   keeping Python outside its source root had its examples silently skipped.
 * **What it reaches.** Packages, namespace-nested packages, and loose scripts in a folder
   with no ``__init__.py`` are three different discovery paths.
-* **How it fails.** A wrong example fails; a module that cannot be *imported* warns and
-  is skipped, because "we could not measure this" is a different statement.
+* **How it fails.** A wrong example fails, and so does a package module whose import is
+  broken by its own code. A module stopped only by an uninstalled third-party module, or a
+  loose script that raises on import, warns and is skipped — "we could not measure this"
+  is a different statement from "this is wrong".
 """
 
 from __future__ import annotations
@@ -202,7 +204,7 @@ class TestDiscoveryPaths:
 
 
 class TestFailureModes:
-    """A wrong example fails; a module that cannot be imported warns and is skipped."""
+    """A wrong example or a broken internal import fails; a missing optional extra warns."""
 
     def test_a_wrong_example_fails_and_the_summary_names_the_module(self, subject: Callable[..., Subject]) -> None:
         """The count in the summary is what makes the failure actionable.
@@ -222,10 +224,10 @@ class TestFailureModes:
         assert "in demopkg.wrong" in result.stdout, result.stdout
         assert "Doctest summary" in result.stdout, result.stdout
 
-    def test_an_unimportable_module_in_a_package_warns_rather_than_failing(
+    def test_a_module_missing_a_third_party_dependency_warns_rather_than_failing(
         self, subject: Callable[..., Subject]
     ) -> None:
-        """Being unable to measure an example is not the same as the example being wrong."""
+        """An optional extra the gate's environment lacks is not a defect in the code under test."""
         repo = subject(
             {
                 "src/demopkg/__init__.py": PASSING_PACKAGE,
@@ -238,6 +240,45 @@ class TestFailureModes:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "Could not import demopkg.absent" in result.stdout, result.stdout
+
+    def test_a_missing_sibling_module_fails_the_gate(self, subject: Callable[..., Subject]) -> None:
+        """A ``ModuleNotFoundError`` naming the package's own submodule is the code's fault.
+
+        Before, this warned and the gate stayed green while every example in the module
+        went unrun. The module carries a passing example on purpose: nothing else could
+        turn the run red.
+
+        Asserted on the summary's first line, which names the module: the subject runs
+        under ``--tb=line``, and on pytest 8 that shows nothing after it.
+        """
+        repo = subject(
+            {
+                "src/demopkg/__init__.py": PASSING_PACKAGE,
+                "src/demopkg/greet.py": PASSING_MODULE + "\nimport demopkg.renamed_away  # noqa: F401\n",
+            },
+            tag="v1.2.3",
+        )
+
+        result = repo.run("test_docstrings")
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "1 unimportable module(s): demopkg.greet" in result.stdout, result.stdout
+
+    def test_a_name_that_no_longer_exists_fails_the_gate(self, subject: Callable[..., Subject]) -> None:
+        """A plain ``ImportError`` (``cannot import name``) is never treated as an optional extra."""
+        repo = subject(
+            {
+                "src/demopkg/__init__.py": PASSING_PACKAGE,
+                "src/demopkg/core.py": PASSING_MODULE,
+                "src/demopkg/user.py": "from demopkg.core import vanished  # noqa: F401\n",
+            },
+            tag="v1.2.3",
+        )
+
+        result = repo.run("test_docstrings")
+
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "1 unimportable module(s): demopkg.user" in result.stdout, result.stdout
 
     def test_a_loose_script_that_raises_on_import_warns_rather_than_failing(
         self, subject: Callable[..., Subject]
