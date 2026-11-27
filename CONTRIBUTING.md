@@ -1,8 +1,32 @@
 # Contributing to pytest-rhiza
 
-How to run the gates is in the README, under *Development* — that fence is what
-`scripts/gates.py` executes and `tests/test_readme_gates.py` pins to `ci.yml`, so it stays
-there. This file holds the decision history behind the repository's shape.
+## Getting started
+
+1. **Set up.** Install the locked environment, then wire the pre-commit hooks so the
+   formatting gate can't surprise you:
+
+   ```bash
+   uv sync
+   uvx prek install
+   ```
+
+2. **Run the gates.** `scripts/gates.py` runs every CI gate locally. How to call it, and
+   what it does beyond CI, is in the README under
+   [*Running all of them*](README.md#running-all-of-them). The gate command lines live only
+   in the README fence above that section. The runner executes that fence, and
+   `tests/test_readme_gates.py` pins it to `ci.yml`, so they aren't copied here.
+
+3. **Commit and open a pull request.**
+   - Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org/):
+     `type(scope): summary`, for example `fix(release_state): …` or `docs: …`.
+   - Each pull request addresses one issue, and its subject names that issue, for example
+     `… (#117)`.
+   - Cut each branch from `main`, so one fix never carries another's commits.
+
+4. **Release.** Releases go through `/rhiza:release`, in two phases. Phase A bumps the
+   version on a pull request, and phase B tags the merged commit. Between the two the
+   version is ahead of the newest tag, and the checks allow that only for a limited time.
+   [CLAUDE.md](CLAUDE.md) explains why under `_versions` and `_release_state`.
 
 ## Two things that were decided
 
