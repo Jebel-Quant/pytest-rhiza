@@ -170,20 +170,21 @@ no `[[tool.bumpversion.files]]` entry for it) and until recently nothing read it
 the pin sat at `0.1.0` for three releases (#17). `tests/test_readme_pin.py` is what notices
 now.
 
-### Doctest scope is the one setting the CLI does not pass
+### Doctest scope comes from `source_folder`
 
 `checks/test_docstrings.py` takes its folders from the `RHIZA_DOCTEST_FOLDERS`
-environment variable, falling back to `src`. That variable is **not** set by
-`rhiza-task` — a consumer whose Python lives outside its source root exports it around
-the gate, which is what rhiza itself does:
+environment variable, falling back to `src`. `rhiza-task rhiza-test` sets that variable to
+the project's `source_folder` setting (since rhiza-task 0.3.1,
+Jebel-Quant/rhiza-task#18), so under the CLI the doctests run wherever the project keeps
+its Python — no wrapper needed. Only a bare `pytest --pyargs pytest_rhiza.checks.*` run,
+outside the CLI, resolves `src` alone; export the variable around it if your Python lives
+elsewhere.
 
-```bash +RHIZA_SKIP
-RHIZA_DOCTEST_FOLDERS="$(uvx rhiza-task print source_folder)" uvx rhiza-task rhiza-test
-```
-
-Without it the check resolves `src` alone, and a project keeping its Python elsewhere has
-its examples silently unchecked — rhiza's own repo being the extreme case, with no `src/`
-at all.
+The check runs every `>>>` example with `doctest.testmod`, not just a presence test. A
+package module whose import fails through its own fault — a missing sibling, a name that
+no longer exists — fails the gate, since its examples could not run. A module stopped only
+by an uninstalled third-party module (an optional extra) is warned about and skipped, as is
+a loose script that raises on import.
 
 ### How long a release may stay in flight
 

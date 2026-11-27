@@ -15,9 +15,16 @@ the measurement and the tally.
 
 **Two layouts, deliberately.** A folder may hold packages (``src/mypkg/__init__.py``) or
 loose scripts (``utils/link_dogfood.py``); both carry docstrings worth checking, so both
-are discovered. A module that cannot be imported is reported as a warning and skipped, not
-failed: a loose script may execute at import, and "we could not measure this" is a
-different statement from "this example is wrong".
+are discovered.
+
+**What an import failure means depends on whose fault it is.** A loose script that raises
+on import is warned about and skipped: it may execute at import, and "we could not measure
+this" is a different statement from "this example is wrong". So is a package module whose
+import stops at a *third-party* module that is not installed — an optional extra absent
+from the gate's environment is not a defect in the code under test. Any other
+``ImportError`` from a package module — a missing sibling, a name that no longer exists, an
+incompatible dependency — **fails the gate**. Skipping those meant a broken internal import
+took every doctest in that module out of the run while the gate stayed green.
 """
 
 from __future__ import annotations
@@ -37,8 +44,52 @@ import pytest
 from pytest_rhiza._source_folder import RHIZA_ENV_PATH, configured_label, doctest_folders, read_rhiza_env
 
 
-def _iter_modules_from_path(logger: logging.Logger, package_path: Path, src_path: Path) -> Iterator[ModuleType]:
-    """Recursively find all Python modules in a directory."""
+def _is_missing_third_party(error: ImportError, module_name: str) -> bool:
+    """Return whether ``error`` is only an uninstalled module outside the package under test.
+
+    That is the one import failure the walk tolerates in a package: an optional extra
+    (``plotly``, ``kaleido``) that the gate's environment does not install. Anything else —
+    a ``ModuleNotFoundError`` naming the package's own submodule, or a plain ``ImportError``
+    such as ``cannot import name`` — is a defect in the code under test.
+
+    Args:
+        error: The exception ``import_module`` raised.
+        module_name: The dotted name being imported.
+
+    Returns:
+        True only for a ``ModuleNotFoundError`` whose missing module has a different
+        top-level name than ``module_name``.
+
+    Examples:
+        >>> _is_missing_third_party(ModuleNotFoundError("x", name="plotly.express"), "pkg.plots")
+        True
+        >>> _is_missing_third_party(ModuleNotFoundError("x", name="pkg.gone"), "pkg.plots")
+        False
+        >>> _is_missing_third_party(ImportError("cannot import name 'f'", name="pkg.core"), "pkg.plots")
+        False
+        >>> _is_missing_third_party(ModuleNotFoundError("x"), "pkg.plots")
+        False
+    """
+    if not isinstance(error, ModuleNotFoundError) or not error.name:
+        return False
+    return error.name.split(".")[0] != module_name.split(".")[0]
+
+
+def _iter_modules_from_path(
+    logger: logging.Logger, package_path: Path, src_path: Path, broken: list[str]
+) -> Iterator[ModuleType]:
+    """Recursively find all Python modules in a directory.
+
+    Args:
+        logger: The test logger.
+        package_path: The package directory to walk.
+        src_path: The directory module names are derived relative to.
+        broken: Receives ``"<module>: <error>"`` for every import failure that is the code's
+            own fault (see :func:`_is_missing_third_party`); the caller fails on it.
+
+    Yields:
+        Each module that imported.
+    """
     for path in package_path.rglob("*.py"):
         if path.name == "__init__.py":
             module_path = path.parent.relative_to(src_path)
@@ -51,8 +102,12 @@ def _iter_modules_from_path(logger: logging.Logger, package_path: Path, src_path
         try:
             yield importlib.import_module(module_name)
         except ImportError as e:
-            warnings.warn(f"Could not import {module_name}: {e}", stacklevel=2)
-            logger.warning("Could not import module %s: %s", module_name, e)
+            if _is_missing_third_party(e, module_name):
+                warnings.warn(f"Could not import {module_name}: {e}", stacklevel=2)
+                logger.warning("Could not import module %s (optional dependency?): %s", module_name, e)
+            else:
+                logger.exception("Could not import module %s", module_name)
+                broken.append(f"{module_name}: {e}")
             continue
 
 
@@ -194,7 +249,7 @@ def _iter_loose_modules(logger: logging.Logger, folder: Path) -> Iterator[Module
 
 
 def _iter_package_modules(
-    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, src_path: Path, import_root: Path
+    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, src_path: Path, import_root: Path, broken: list[str]
 ) -> Iterator[ModuleType]:
     """Yield the modules of every package under one configured folder.
 
@@ -203,11 +258,12 @@ def _iter_package_modules(
         monkeypatch: The test's monkeypatch fixture, for :func:`_evict_shadowing_package`.
         src_path: The configured folder being walked.
         import_root: The directory prepended to ``sys.path`` for that folder.
+        broken: Passed through to :func:`_iter_modules_from_path`.
 
     Yields:
-        Each imported module. A module that cannot be imported is warned about and skipped
-        by :func:`_iter_modules_from_path`, one module at a time — not measuring something
-        is a different statement from finding it wrong.
+        Each imported module. A module that cannot be imported is set aside by
+        :func:`_iter_modules_from_path`, one module at a time — recorded in ``broken`` when
+        the failure is the code's own, warned about when it is a missing optional extra.
     """
     # No `is_dir() and (package_dir / "__init__.py").exists()` guard: the inline version
     # had one, and inverting it to a `continue` made visible that it can never fire.
@@ -221,18 +277,19 @@ def _iter_package_modules(
     # the walk raising one would mean that handler had stopped working. It was 4 of the 6
     # uncovered lines in the package and could not be tested, because there is no repo
     # state that reaches it. Per-module is also the better granularity: one unimportable
-    # module no longer costs the measurement of its siblings.
+    # module no longer costs the measurement of its siblings — and when that module's
+    # failure is its own fault, the gate still fails on it through ``broken``.
     for package_dir in _find_packages(src_path):
         package_name = package_dir.name
         logger.info("Discovered package: %s", package_name)
         _evict_shadowing_package(monkeypatch, logger, import_root, package_dir)
-        modules = list(_iter_modules_from_path(logger, package_dir, import_root))
+        modules = list(_iter_modules_from_path(logger, package_dir, import_root, broken))
         logger.debug("%d module(s) found in package %s", len(modules), package_name)
         yield from modules
 
 
 def _iter_doctest_modules(
-    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, folders: list[Path]
+    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, folders: list[Path], broken: list[str]
 ) -> Iterator[ModuleType]:
     """Yield every module to doctest, across folders, packages and loose scripts.
 
@@ -246,6 +303,7 @@ def _iter_doctest_modules(
         monkeypatch: The test's monkeypatch fixture, so both the ``sys.path`` prepend and
             any ``sys.modules`` eviction are undone at teardown.
         folders: The configured folders that exist, from :func:`doctest_folders`.
+        broken: Receives every package module whose import failed through its own fault.
 
     Yields:
         Every importable module found, packages first and then loose scripts, in folder
@@ -264,7 +322,7 @@ def _iter_doctest_modules(
         monkeypatch.syspath_prepend(str(import_root))
         logger.debug("Prepended to sys.path: %s", import_root)
 
-        yield from _iter_package_modules(logger, monkeypatch, src_path, import_root)
+        yield from _iter_package_modules(logger, monkeypatch, src_path, import_root, broken)
 
         # And the loose scripts, which no package walk reaches
         yield from _iter_loose_modules(logger, src_path)
@@ -282,6 +340,9 @@ class _Tally:
         attempted: Examples run across all modules.
         failed: Examples that failed across all modules.
         failures: One ``(module name, failed, attempted)`` triple per failing module.
+        broken: One ``"<module>: <error>"`` line per package module that could not be
+            imported through its own fault, filled in by the walk. Its doctests never ran,
+            so it fails the gate just as a wrong example does.
     """
 
     def __init__(self) -> None:
@@ -289,6 +350,7 @@ class _Tally:
         self.attempted = 0
         self.failed = 0
         self.failures: list[tuple[str, int, int]] = []
+        self.broken: list[str] = []
 
     def record(self, name: str, attempted: int, failed: int) -> None:
         """Fold one module's result into the totals.
@@ -313,11 +375,15 @@ class _Tally:
             should not have to learn a new shape.
         """
         formatted = "\n".join(f"  {name}: {failed}/{attempted} failed" for name, failed, attempted in self.failures)
-        return (
+        message = (
             f"Doctest summary: {self.attempted} tests across {len(self.failures)} module(s)\n"
             f"Failures: {self.failed}\n"
             f"Failed modules:\n{formatted}"
         )
+        if self.broken:
+            unimportable = "\n".join(f"  {line}" for line in self.broken)
+            message += f"\nUnimportable modules (their doctests did not run):\n{unimportable}"
+        return message
 
 
 def _measure(logger: logging.Logger, capsys: pytest.CaptureFixture[str], module: ModuleType) -> doctest.TestResults:
@@ -359,7 +425,7 @@ def _measure_all(
         The tally, whose ``failures`` is what the gate asserts on.
     """
     tally = _Tally()
-    for module in _iter_doctest_modules(logger, monkeypatch, folders):
+    for module in _iter_doctest_modules(logger, monkeypatch, folders, tally.broken):
         results = _measure(logger, capsys, module)
         tally.record(module.__name__, results.attempted, results.failed)
         if results.failed:
@@ -389,9 +455,9 @@ def test_doctests(
 
     tally = _measure_all(logger, capsys, monkeypatch, folders)
 
-    if tally.failures:
+    if tally.failures or tally.broken:
         logger.error("%s", tally.message)
-        assert not tally.failures, tally.message
+        pytest.fail(tally.message)
 
     logger.info("Doctest summary: %d tests, 0 failures", tally.attempted)
 
