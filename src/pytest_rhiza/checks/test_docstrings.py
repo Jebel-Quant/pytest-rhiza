@@ -76,7 +76,7 @@ def _is_missing_third_party(error: ImportError, module_name: str) -> bool:
 
 
 def _iter_modules_from_path(
-    logger: logging.Logger, package_path: Path, src_path: Path, broken: list[str]
+    logger: logging.Logger, package_path: Path, src_path: Path, broken: list[tuple[str, str]]
 ) -> Iterator[ModuleType]:
     """Recursively find all Python modules in a directory.
 
@@ -84,7 +84,7 @@ def _iter_modules_from_path(
         logger: The test logger.
         package_path: The package directory to walk.
         src_path: The directory module names are derived relative to.
-        broken: Receives ``"<module>: <error>"`` for every import failure that is the code's
+        broken: Receives ``(module, error)`` for every import failure that is the code's
             own fault (see :func:`_is_missing_third_party`); the caller fails on it.
 
     Yields:
@@ -107,7 +107,7 @@ def _iter_modules_from_path(
                 logger.warning("Could not import module %s (optional dependency?): %s", module_name, e)
             else:
                 logger.exception("Could not import module %s", module_name)
-                broken.append(f"{module_name}: {e}")
+                broken.append((module_name, str(e)))
             continue
 
 
@@ -249,7 +249,11 @@ def _iter_loose_modules(logger: logging.Logger, folder: Path) -> Iterator[Module
 
 
 def _iter_package_modules(
-    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, src_path: Path, import_root: Path, broken: list[str]
+    logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+    src_path: Path,
+    import_root: Path,
+    broken: list[tuple[str, str]],
 ) -> Iterator[ModuleType]:
     """Yield the modules of every package under one configured folder.
 
@@ -289,7 +293,7 @@ def _iter_package_modules(
 
 
 def _iter_doctest_modules(
-    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, folders: list[Path], broken: list[str]
+    logger: logging.Logger, monkeypatch: pytest.MonkeyPatch, folders: list[Path], broken: list[tuple[str, str]]
 ) -> Iterator[ModuleType]:
     """Yield every module to doctest, across folders, packages and loose scripts.
 
@@ -340,7 +344,7 @@ class _Tally:
         attempted: Examples run across all modules.
         failed: Examples that failed across all modules.
         failures: One ``(module name, failed, attempted)`` triple per failing module.
-        broken: One ``"<module>: <error>"`` line per package module that could not be
+        broken: One ``(module, error)`` pair per package module that could not be
             imported through its own fault, filled in by the walk. Its doctests never ran,
             so it fails the gate just as a wrong example does.
     """
@@ -350,7 +354,7 @@ class _Tally:
         self.attempted = 0
         self.failed = 0
         self.failures: list[tuple[str, int, int]] = []
-        self.broken: list[str] = []
+        self.broken: list[tuple[str, str]] = []
 
     def record(self, name: str, attempted: int, failed: int) -> None:
         """Fold one module's result into the totals.
@@ -370,18 +374,21 @@ class _Tally:
         """Return the assertion message naming every failing module.
 
         Returns:
-            The summary, unchanged from the inline version — ``tests/`` asserts on the
+            The summary, in the inline version's shape — ``tests/`` asserts on the
             ``"Doctest summary"`` prefix, and a reader who has seen a red run before
-            should not have to learn a new shape.
+            should not have to learn a new shape. Unimportable modules are named on that
+            **first line**, not only in the section below it: ``--tb=line`` and the ``-ra``
+            short summary show the first line alone on pytest 8, so a name kept to the
+            later lines would be invisible exactly where a terse report is all there is.
         """
-        formatted = "\n".join(f"  {name}: {failed}/{attempted} failed" for name, failed, attempted in self.failures)
-        message = (
-            f"Doctest summary: {self.attempted} tests across {len(self.failures)} module(s)\n"
-            f"Failures: {self.failed}\n"
-            f"Failed modules:\n{formatted}"
-        )
+        headline = f"Doctest summary: {self.attempted} tests across {len(self.failures)} module(s)"
         if self.broken:
-            unimportable = "\n".join(f"  {line}" for line in self.broken)
+            names = ", ".join(name for name, _ in self.broken)
+            headline += f"; {len(self.broken)} unimportable module(s): {names}"
+        formatted = "\n".join(f"  {name}: {failed}/{attempted} failed" for name, failed, attempted in self.failures)
+        message = f"{headline}\nFailures: {self.failed}\nFailed modules:\n{formatted}"
+        if self.broken:
+            unimportable = "\n".join(f"  {name}: {error}" for name, error in self.broken)
             message += f"\nUnimportable modules (their doctests did not run):\n{unimportable}"
         return message
 

@@ -247,6 +247,9 @@ class TestFailureModes:
         Before, this warned and the gate stayed green while every example in the module
         went unrun. The module carries a passing example on purpose: nothing else could
         turn the run red.
+
+        Asserted on the summary's first line, which names the module: the subject runs
+        under ``--tb=line``, and on pytest 8 that shows nothing after it.
         """
         repo = subject(
             {
@@ -259,8 +262,7 @@ class TestFailureModes:
         result = repo.run("test_docstrings")
 
         assert result.returncode != 0, result.stdout + result.stderr
-        assert "Unimportable modules" in result.stdout, result.stdout
-        assert "demopkg.greet" in result.stdout, result.stdout
+        assert "1 unimportable module(s): demopkg.greet" in result.stdout, result.stdout
 
     def test_a_name_that_no_longer_exists_fails_the_gate(self, subject: Callable[..., Subject]) -> None:
         """A plain ``ImportError`` (``cannot import name``) is never treated as an optional extra."""
@@ -276,8 +278,7 @@ class TestFailureModes:
         result = repo.run("test_docstrings")
 
         assert result.returncode != 0, result.stdout + result.stderr
-        assert "Unimportable modules" in result.stdout, result.stdout
-        assert "demopkg.user" in result.stdout, result.stdout
+        assert "1 unimportable module(s): demopkg.user" in result.stdout, result.stdout
 
     def test_a_loose_script_that_raises_on_import_warns_rather_than_failing(
         self, subject: Callable[..., Subject]
