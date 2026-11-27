@@ -124,7 +124,22 @@ the specific reason; read it before folding one back into a check.
 `_toml` is the exception to that story: it holds one type alias, `TomlTable`, and exists
 so the reason TOML values are `Any` is written once instead of implied at forty call sites.
 
-Two of them encode non-obvious decisions:
+**`_bumpversion` holds test code on purpose, and this is not a layering violation.**
+Besides plain functions it defines `SyncedBumpversionConfig`, a base class carrying six
+`test_*` methods that `checks/test_cargo_toml.py` and `checks/test_go_module.py` subclass
+as `TestBumpversionConfig` (#14). What was duplicated across bundles was the assertions
+themselves, so the shared home has to hold the assertions. The other homes are closed:
+
+- `checks/` cannot hold it, because its modules are the published interface and stay one
+  per synced file, names unchanged.
+- A separate helper module would still be a helper holding tests, with one more module
+  in between.
+
+The base name deliberately lacks a `Test` prefix, so pytest does not collect it a second
+time in each importing module. Moving the class was proposed in #122 and declined for
+these reasons. Don't re-propose it without answering them.
+
+Some of them encode non-obvious decisions:
 
 - `_process` gives every child process an explicit timeout. `pytest-timeout` cannot do this
   job: it takes its bound from the **consumer's** ini setting, and nothing here sets a
